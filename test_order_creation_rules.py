@@ -3,7 +3,7 @@
 import unittest
 from decimal import Decimal
 
-from order_creation_rules import DEMO_CUE_LENGTH_INCHES, validate_room_size
+from order_creation_rules import DEMO_CUE_LENGTH_INCHES, build_configuration_snapshot, validate_room_size
 
 
 class RoomSizeRulesTests(unittest.TestCase):
@@ -51,6 +51,26 @@ class RoomSizeRulesTests(unittest.TestCase):
         self.assertEqual(first, second)
         first["suitable_table_sizes"].clear()
         self.assertEqual(validate_room_size("5.2m x 4m", "8ft"), second)
+
+
+class ConfigurationSnapshotTests(unittest.TestCase):
+    def test_exact_fields_purity_and_independence(self):
+        from test_order_creation_state import complete_customer_state
+        state = complete_customer_state()
+        state.quantity = 2
+        before = state.model_dump()
+        first = build_configuration_snapshot(state)
+        expected = {
+            "product_model": "Premier Standard", "table_size": "8ft",
+            "timber": "Tasmanian Oak", "timber_painting": "White",
+            "felt_color": "Charcoal Grey", "bracket": "Test bracket",
+            "top_profile": "Test profile", "quantity": 2,
+        }
+        self.assertEqual(first, expected)
+        second = build_configuration_snapshot(state)
+        first.clear()
+        self.assertEqual(second, expected)
+        self.assertEqual(state.model_dump(), before)
 
 
 if __name__ == "__main__":

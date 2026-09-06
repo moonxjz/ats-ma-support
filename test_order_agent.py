@@ -38,17 +38,21 @@ class OrderAgentTests(unittest.TestCase):
         calls = Mock()
         calls.attach_mock(self.extract, "extract")
         with patch("order_agent.apply_extracted_order_information", return_value=updated) as merge, \
-             patch("order_agent.execute_order_creation_workflow", return_value=result) as execute:
+             patch("order_agent.execute_order_creation_workflow", return_value=result) as execute, \
+             patch("order_agent.apply_order_creation_reentry") as reentry:
             calls.attach_mock(merge, "merge")
+            calls.attach_mock(reentry, "reentry")
             calls.attach_mock(execute, "execute")
             actual_state, actual_result = process_order_creation_message("Alex", self.history, self.state)
         self.assertEqual(calls.mock_calls, [
             call.extract("Alex", self.history, self.state),
-            call.merge(self.state, extracted), call.execute(updated),
+            call.merge(self.state, extracted), call.reentry(self.state, updated), call.execute(updated),
         ])
         self.assertIs(self.extract.call_args.args[1], self.history)
         self.assertIs(self.extract.call_args.args[2], self.state)
         self.assertIs(merge.call_args.args[1], extracted)
+        self.assertIs(reentry.call_args.args[0], self.state)
+        self.assertIs(reentry.call_args.args[1], updated)
         self.assertIs(execute.call_args.args[0], updated)
         self.assertIsNot(updated, self.state)
         self.assertIs(actual_state, updated)
@@ -164,23 +168,53 @@ class OrderAgentTests(unittest.TestCase):
                     self.assertEqual(getattr(updated, field), value)
                 self.assertEqual(state.model_dump(), before)
 
-    def test_successful_validation_raises_without_returning_working_copy(self):
+    def test_successful_validation_returns_advanced_copy_and_exact_result(self):
         state = complete_customer_state()
         before = state.model_dump()
         history_before = deepcopy(self.history)
-        with patch("order_agent.execute_order_creation_workflow", wraps=execute_order_creation_workflow) as execute:
-            with self.assertRaisesRegex(NotImplementedError, "CONFIGURATION_CONFIRMATION"):
-                process_order_creation_message("Thanks", self.history, state)
-        # Only the test spy can inspect this copy: the invocation raised instead
-        # of returning a tuple. The caller retains its original unchanged Wt.
-        working = execute.call_args.args[0]
-        self.assertIsNot(working, state)
-        self.assertEqual(working.current_stage, OrderCreationStage.CONFIGURATION_CONFIRMATION)
-        self.assertEqual(working.room_size_validation_result, "SUITABLE")
-        self.assertEqual(working.status, OrderWorkflowStatus.ACTIVE)
-        self.assertIsNone(working.failure_reason)
+        results = []
+        def capture(working):
+            result = execute_order_creation_workflow(working)
+            results.append(result)
+            return result
+        with patch("order_agent.execute_order_creation_workflow", side_effect=capture) as execute:
+            updated, result = process_order_creation_message("Thanks", self.history, state)
+        self.assertIs(result, results[0])
+        self.assertIs(updated, execute.call_args.args[0])
+        self.assertIsNot(updated, state)
+        self.assertEqual(updated.current_stage, OrderCreationStage.CONFIGURATION_CONFIRMATION)
+        self.assertEqual(updated.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
+        self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
         self.assertEqual(state.model_dump(), before)
         self.assertEqual(self.history, history_before)
+
+    def test_next_turn_empty_or_same_value_stays_waiting_without_prior_handlers(self):
+        state, _ = process_order_creation_message("Initial", [], complete_customer_state())
+        for message, values in (("Yes", {}), ("No", {}), ("8ft", {"table_size": "8ft"})):
+            self.extract.return_value = ExtractedOrderInformation(**values)
+            before = state.model_dump()
+            with patch("order_creation_controller.handle_collect_requirements") as collect, \
+                 patch("order_creation_controller.handle_validate_configuration") as validate:
+                updated, result = process_order_creation_message(message, [], state)
+            collect.assert_not_called()
+            validate.assert_not_called()
+            self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
+            self.assertFalse(updated.configuration_confirmed)
+            self.assertEqual(state.model_dump(), before)
+
+    def test_next_turn_correction_cannot_bypass_collection_and_validation(self):
+        from order_creation_controller import handle_collect_requirements, handle_validate_configuration
+        state, _ = process_order_creation_message("Initial", [], complete_customer_state())
+        before = state.model_dump()
+        self.extract.return_value = ExtractedOrderInformation(felt_color="Green")
+        with patch("order_creation_controller.handle_collect_requirements", wraps=handle_collect_requirements) as collect, \
+             patch("order_creation_controller.handle_validate_configuration", wraps=handle_validate_configuration) as validate:
+            updated, result = process_order_creation_message("Green instead", self.history, state)
+        collect.assert_called_once()
+        validate.assert_called_once()
+        self.assertEqual(updated.order_snapshot["felt_color"], "Green")
+        self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
+        self.assertEqual(state.model_dump(), before)
 
     def test_terminal_policy_remains_in_controller_after_extraction(self):
         self.state.status = OrderWorkflowStatus.COMPLETED

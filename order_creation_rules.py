@@ -5,6 +5,8 @@ business default. Suitable sizes describe room fit, not product availability.
 """
 
 import re
+
+from order_creation_state import OrderCreationState
 from decimal import Decimal
 
 
@@ -66,3 +68,11 @@ def validate_room_size(room_size: str | None, table_size: str | None) -> dict:
         "result": "SUITABLE" if selected_size in suitable_sizes else "UNSUITABLE",
         "suitable_table_sizes": suitable_sizes,
     }
+
+
+def build_configuration_snapshot(state: OrderCreationState) -> dict:
+    """Return the workbook's unpriced product configuration without changing Wt."""
+    return {field: getattr(state, field) for field in (
+        "product_model", "table_size", "timber", "timber_painting",
+        "felt_color", "bracket", "top_profile", "quantity",
+    )}

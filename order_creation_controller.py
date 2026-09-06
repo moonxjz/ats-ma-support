@@ -1,7 +1,8 @@
-"""Internal collection-stage handling for ORDER_CREATE_WF."""
+"""Deterministic stage execution and bounded re-entry for ORDER_CREATE_WF."""
 
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
-from order_creation_rules import validate_room_size
+from order_creation_rules import build_configuration_snapshot, validate_room_size
+from order_creation_updates import ExtractedOrderInformation
 from order_creation_state import (
     OrderCreationStage,
     OrderCreationState,
@@ -33,6 +34,7 @@ def execute_order_creation_workflow(state: OrderCreationState) -> BusinessResult
         if stage not in {
             OrderCreationStage.COLLECT_REQUIREMENTS,
             OrderCreationStage.VALIDATE_CONFIGURATION,
+            OrderCreationStage.CONFIGURATION_CONFIRMATION,
         }:
             raise NotImplementedError(f"Workflow stage is not implemented: {stage.value}")
         if stage in visited_stages:
@@ -41,8 +43,10 @@ def execute_order_creation_workflow(state: OrderCreationState) -> BusinessResult
 
         if stage == OrderCreationStage.COLLECT_REQUIREMENTS:
             result = handle_collect_requirements(state)
-        else:
+        elif stage == OrderCreationStage.VALIDATE_CONFIGURATION:
             result = handle_validate_configuration(state)
+        else:
+            result = handle_configuration_confirmation(state)
 
         if isinstance(result, BusinessResult):
             return result
@@ -156,5 +160,77 @@ def handle_validate_configuration(state: OrderCreationState) -> BusinessResult |
         reason=reason,
         required_input=required_input,
         data=data,
+        error=None,
+    )
+
+
+def apply_order_creation_reentry(
+    previous_state: OrderCreationState,
+    updated_state: OrderCreationState,
+) -> None:
+    """Invalidate only the independent merged Wt on a confirmation-stage change.
+
+    Uniform revalidation of all customer-data changes is an MVP simplification,
+    not a general ATS dependency policy. No handlers or business outcomes here.
+    """
+    if previous_state.current_stage != OrderCreationStage.CONFIGURATION_CONFIRMATION:
+        return
+    if previous_state.status not in {
+        OrderWorkflowStatus.ACTIVE, OrderWorkflowStatus.AWAITING_USER_INPUT,
+    }:
+        return
+    fields = set(ExtractedOrderInformation.model_fields)
+    if previous_state.model_dump(include=fields) == updated_state.model_dump(include=fields):
+        return
+    updated_state.current_stage = OrderCreationStage.COLLECT_REQUIREMENTS
+    updated_state.status = OrderWorkflowStatus.ACTIVE
+    updated_state.pending_field = None
+    updated_state.configuration_confirmed = False
+    updated_state.room_size_validation_result = None
+    updated_state.order_snapshot = {}
+    updated_state.pending_system_fields = [
+        field for field in updated_state.pending_system_fields
+        if field != "room_size_validation_result"
+    ] + ["room_size_validation_result"]
+    updated_state.pending_confirmations = [
+        field for field in updated_state.pending_confirmations
+        if field != "configuration_confirmed"
+    ]
+    updated_state.updated_at = current_utc_time()
+
+
+def handle_configuration_confirmation(state: OrderCreationState) -> BusinessResult:
+    """Request confirmation only; callers must apply re-entry after data changes.
+
+    The stored suitability is a prerequisite established by validation, not
+    recalculated here. Confirmation acceptance remains explicitly unimplemented.
+    """
+    if state.current_stage != OrderCreationStage.CONFIGURATION_CONFIRMATION:
+        raise ValueError("Handler requires current_stage=CONFIGURATION_CONFIRMATION.")
+    if state.status not in {
+        OrderWorkflowStatus.ACTIVE, OrderWorkflowStatus.AWAITING_USER_INPUT,
+    }:
+        raise ValueError("Handler requires status=ACTIVE or AWAITING_USER_INPUT.")
+    if state.configuration_confirmed:
+        raise NotImplementedError("Confirmed configuration processing is not implemented.")
+    if determine_missing_fields(state) or state.room_size_validation_result != "SUITABLE":
+        raise ValueError("Confirmation requires complete customer information and suitable room validation.")
+    state.order_snapshot = build_configuration_snapshot(state)
+    state.status = OrderWorkflowStatus.AWAITING_USER_INPUT
+    state.configuration_confirmed = False
+    state.pending_field = None
+    state.pending_confirmations = [
+        field for field in state.pending_confirmations if field != "configuration_confirmed"
+    ] + ["configuration_confirmed"]
+    state.updated_at = current_utc_time()
+    return BusinessResult(
+        workflow_id=state.workflow_id,
+        source_agent="ORDER_AGENT",
+        action="CREATE_ORDER",
+        current_stage=OrderCreationStage.CONFIGURATION_CONFIRMATION.value,
+        result_status=BusinessResultStatus.NEEDS_USER_INPUT,
+        reason=BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED,
+        data={"configuration_snapshot": state.order_snapshot.copy()},
+        required_input=["configuration_confirmed"],
         error=None,
     )

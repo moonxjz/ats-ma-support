@@ -6,6 +6,8 @@ from unittest.mock import patch
 from business_result import BusinessResultReason, BusinessResultStatus
 from order_creation_controller import (
     execute_order_creation_workflow,
+    apply_order_creation_reentry,
+    handle_configuration_confirmation,
     handle_collect_requirements,
     handle_validate_configuration,
 )
@@ -310,19 +312,19 @@ class WorkflowExecutionTests(unittest.TestCase):
                 self.assertEqual(result.current_stage, "VALIDATE_CONFIGURATION")
                 self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
 
-    def test_successful_validation_keeps_progress_at_unimplemented_boundary(self):
+    def test_successful_validation_returns_confirmation_request(self):
         state = complete_customer_state()
-        with self.assertRaisesRegex(NotImplementedError, "CONFIGURATION_CONFIRMATION"):
-            execute_order_creation_workflow(state)
+        result = execute_order_creation_workflow(state)
+        self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
         self.assertEqual(state.current_stage, OrderCreationStage.CONFIGURATION_CONFIRMATION)
-        self.assertEqual(state.status, OrderWorkflowStatus.ACTIVE)
+        self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
         self.assertEqual(state.room_size_validation_result, "SUITABLE")
         self.assertIsNone(state.failure_reason)
         self.assertIsNone(state.order_id)
 
     def test_direct_unimplemented_stages_do_not_mutate(self):
         for stage in OrderCreationStage:
-            if stage in (OrderCreationStage.COLLECT_REQUIREMENTS, OrderCreationStage.VALIDATE_CONFIGURATION):
+            if stage in (OrderCreationStage.COLLECT_REQUIREMENTS, OrderCreationStage.VALIDATE_CONFIGURATION, OrderCreationStage.CONFIGURATION_CONFIRMATION):
                 continue
             with self.subTest(stage=stage):
                 state = complete_customer_state()
@@ -388,8 +390,144 @@ class WorkflowExecutionTests(unittest.TestCase):
         second = execute_order_creation_workflow(state)
         self.assertEqual(first.reason, second.reason)
         state.room_size = "5.2m x 4m"
-        with self.assertRaisesRegex(NotImplementedError, "CONFIGURATION_CONFIRMATION"):
-            execute_order_creation_workflow(state)
+        result = execute_order_creation_workflow(state)
+        self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
+
+
+class ConfirmationAndReentryTests(unittest.TestCase):
+    def waiting_state(self):
+        state = complete_customer_state()
+        execute_order_creation_workflow(state)
+        return state
+
+    def test_waiting_result_tracking_aliases_and_repetition(self):
+        for status in (OrderWorkflowStatus.ACTIVE, OrderWorkflowStatus.AWAITING_USER_INPUT):
+            state = self.waiting_state()
+            state.status = status
+            state.last_question = "Previous wording"
+            state.conflicting_fields = {"felt_color": ["Blue", "Green"]}
+            state.pending_confirmations = ["configuration_confirmed", "final_order_confirmed", "configuration_confirmed"]
+            before = state.model_dump()
+            with patch("order_creation_controller.current_utc_time", return_value="fixed"):
+                result = handle_configuration_confirmation(state)
+                again = handle_configuration_confirmation(state)
+            self.assertEqual(result, again)
+            self.assertEqual(result.result_status, BusinessResultStatus.NEEDS_USER_INPUT)
+            self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
+            self.assertEqual(result.required_input, ["configuration_confirmed"])
+            self.assertEqual(state.pending_confirmations, ["final_order_confirmed", "configuration_confirmed"])
+            self.assertEqual(result.data["configuration_snapshot"], state.order_snapshot)
+            self.assertIsNot(result.data["configuration_snapshot"], state.order_snapshot)
+            result.data["configuration_snapshot"].clear()
+            self.assertTrue(state.order_snapshot)
+            changed = {"order_snapshot", "status", "pending_field", "configuration_confirmed", "pending_confirmations", "updated_at"}
+            self.assertEqual({k:v for k,v in before.items() if k not in changed},
+                             {k:v for k,v in state.model_dump().items() if k not in changed})
+            self.assertEqual(state.updated_at, "fixed")
+
+    def test_invalid_confirmation_entry_does_not_mutate(self):
+        cases = [("configuration_confirmed", True, NotImplementedError),
+                 ("phone", None, ValueError), ("room_size_validation_result", None, ValueError),
+                 ("room_size_validation_result", "UNSUITABLE", ValueError)]
+        cases += [("status", status, ValueError) for status in
+                  (OrderWorkflowStatus.COMPLETED, OrderWorkflowStatus.FAILED, OrderWorkflowStatus.CANCELLED)]
+        cases += [("current_stage", stage, ValueError) for stage in OrderCreationStage
+                  if stage != OrderCreationStage.CONFIGURATION_CONFIRMATION]
+        for field, value, error in cases:
+            with self.subTest(field=field, value=value):
+                state = self.waiting_state()
+                setattr(state, field, value)
+                before = state.model_dump()
+                with self.assertRaises(error):
+                    handle_configuration_confirmation(state)
+                self.assertEqual(state.model_dump(), before)
+
+    def test_effective_changes_invalidate_only_approved_fields(self):
+        from order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+        updates = [{"felt_color": "Green"}, {"table_size": "9ft"}, {"room_size": "6m x 5m"},
+                   {"phone": "0400123456"}, {"delivery_address": {"city": "Richmond"}},
+                   {"company_name": None}, {"customer_instructions": None},
+                   {"delivery_address": {"address_line_2": None}}, {"quantity": 2},
+                   {"felt_color": "Green", "phone": "0400123456"}]
+        for values in updates:
+            with self.subTest(values=values):
+                previous = self.waiting_state()
+                previous.company_name = "Company"
+                previous.customer_instructions = "Instructions"
+                previous.delivery_address.address_line_2 = "Suite 2"
+                previous.configuration_confirmed = True
+                previous.pending_field = "old"
+                previous.pending_system_fields = ["sku", "room_size_validation_result", "price", "room_size_validation_result"]
+                previous.pending_confirmations = ["configuration_confirmed", "final_order_confirmed", "configuration_confirmed"]
+                previous.last_question = "Old question"
+                previous.failure_reason = "Old diagnostic"
+                previous.conflicting_fields = {"felt_color": ["Blue"]}
+                before = previous.model_dump()
+                updated = apply_extracted_order_information(previous, ExtractedOrderInformation(**values))
+                expected = updated.model_dump()
+                expected.update(current_stage=OrderCreationStage.COLLECT_REQUIREMENTS,
+                                status=OrderWorkflowStatus.ACTIVE, pending_field=None,
+                                configuration_confirmed=False, room_size_validation_result=None,
+                                order_snapshot={}, updated_at="fixed",
+                                pending_system_fields=["sku", "price", "room_size_validation_result"],
+                                pending_confirmations=["final_order_confirmed"])
+                with patch("order_creation_controller.current_utc_time", return_value="fixed"):
+                    self.assertIsNone(apply_order_creation_reentry(previous, updated))
+                self.assertEqual(updated.model_dump(), expected)
+                self.assertEqual(previous.model_dump(), before)
+
+    def test_no_change_and_outside_scope_are_noops(self):
+        from order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+        previous = self.waiting_state()
+        for values in ({}, {"table_size": "8ft"}, {"delivery_address": {}}, {"company_name": None}):
+            updated = apply_extracted_order_information(previous, ExtractedOrderInformation(**values))
+            updated.updated_at = "Different timestamp"
+            updated.failure_reason = "Different diagnostic"
+            before = updated.model_dump()
+            apply_order_creation_reentry(previous, updated)
+            self.assertEqual(updated.model_dump(), before)
+        for stage in OrderCreationStage:
+            for status in OrderWorkflowStatus:
+                if stage == OrderCreationStage.CONFIGURATION_CONFIRMATION and status in (
+                    OrderWorkflowStatus.ACTIVE, OrderWorkflowStatus.AWAITING_USER_INPUT):
+                    continue
+                previous = self.waiting_state()
+                previous.current_stage, previous.status = stage, status
+                updated = apply_extracted_order_information(previous, ExtractedOrderInformation(felt_color="Green"))
+                before = updated.model_dump()
+                apply_order_creation_reentry(previous, updated)
+                self.assertEqual(updated.model_dump(), before)
+
+    def test_reentry_routes_through_actual_handlers(self):
+        from order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+        cases = [({"felt_color": "Green"}, "CONFIGURATION_CONFIRMATION_REQUIRED", True),
+                 ({"table_size": "9ft"}, "ROOM_SIZE_UNSUITABLE", False),
+                 ({"room_size": "6m x 5m"}, "CONFIGURATION_CONFIRMATION_REQUIRED", True),
+                 ({"room_size": "large"}, "MISSING_REQUIRED_INFORMATION", False),
+                 ({"table_size": "11ft"}, "MISSING_REQUIRED_INFORMATION", False),
+                 ({"phone": "0400123456"}, "CONFIGURATION_CONFIRMATION_REQUIRED", True)]
+        for values, reason, confirms in cases:
+            with self.subTest(values=values):
+                previous = self.waiting_state()
+                updated = apply_extracted_order_information(previous, ExtractedOrderInformation(**values))
+                apply_order_creation_reentry(previous, updated)
+                order = []
+                def capture(name, handler):
+                    def run(state):
+                        order.append(name)
+                        return handler(state)
+                    return run
+                with patch("order_creation_controller.handle_collect_requirements", side_effect=capture("collect", handle_collect_requirements)), \
+                     patch("order_creation_controller.handle_validate_configuration", side_effect=capture("validate", handle_validate_configuration)), \
+                     patch("order_creation_controller.handle_configuration_confirmation", side_effect=capture("confirm", handle_configuration_confirmation)):
+                    result = execute_order_creation_workflow(updated)
+                self.assertEqual(order, ["collect", "validate"] + (["confirm"] if confirms else []))
+                self.assertEqual(result.reason.value, reason)
+                self.assertEqual("configuration_confirmed" in updated.pending_confirmations, confirms)
+                if confirms:
+                    self.assertEqual(updated.order_snapshot["felt_color"], updated.felt_color)
+                else:
+                    self.assertEqual(updated.order_snapshot, {})
 
 
 if __name__ == "__main__":
