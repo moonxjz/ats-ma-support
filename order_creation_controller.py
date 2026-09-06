@@ -11,6 +11,49 @@ from order_creation_state import (
 from workflow_state import current_utc_time
 
 
+def execute_order_creation_workflow(state: OrderCreationState) -> BusinessResult:
+    """Run implemented stages until a handler produces a business result.
+
+    Unimplemented stages raise NotImplementedError without undoing progress or
+    marking business failure. Cycle detection is local to this execution call.
+    """
+    if state.status not in {
+        OrderWorkflowStatus.ACTIVE,
+        OrderWorkflowStatus.AWAITING_USER_INPUT,
+    }:
+        raise ValueError("Execution requires status=ACTIVE or AWAITING_USER_INPUT.")
+
+    visited_stages = set()
+    while True:
+        try:
+            stage = OrderCreationStage(state.current_stage)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Unrecognized workflow stage: {state.current_stage!r}") from exc
+
+        if stage not in {
+            OrderCreationStage.COLLECT_REQUIREMENTS,
+            OrderCreationStage.VALIDATE_CONFIGURATION,
+        }:
+            raise NotImplementedError(f"Workflow stage is not implemented: {stage.value}")
+        if stage in visited_stages:
+            raise RuntimeError(f"Internal workflow cycle at stage: {stage.value}")
+        visited_stages.add(stage)
+
+        if stage == OrderCreationStage.COLLECT_REQUIREMENTS:
+            result = handle_collect_requirements(state)
+        else:
+            result = handle_validate_configuration(state)
+
+        if isinstance(result, BusinessResult):
+            return result
+        if result is not None:
+            raise RuntimeError(f"Unexpected handler return value at stage: {stage.value}")
+        if state.current_stage == stage:
+            raise RuntimeError(f"Handler returned None without stage advancement: {stage.value}")
+        if state.status != OrderWorkflowStatus.ACTIVE:
+            raise RuntimeError("Internal continuation requires status=ACTIVE.")
+
+
 def handle_collect_requirements(state: OrderCreationState) -> BusinessResult | None:
     """Update collection tracking and return a user-input result when needed.
 

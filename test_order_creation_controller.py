@@ -4,7 +4,11 @@ import unittest
 from unittest.mock import patch
 
 from business_result import BusinessResultReason, BusinessResultStatus
-from order_creation_controller import handle_collect_requirements, handle_validate_configuration
+from order_creation_controller import (
+    execute_order_creation_workflow,
+    handle_collect_requirements,
+    handle_validate_configuration,
+)
 from order_creation_state import (
     OrderCreationStage,
     OrderCreationState,
@@ -268,6 +272,124 @@ class ValidateConfigurationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     handle_validate_configuration(state)
                 self.assertEqual(state.model_dump_json(), before)
+
+
+class WorkflowExecutionTests(unittest.TestCase):
+    def test_returns_exact_handler_result(self):
+        for stage, handler in (
+            (OrderCreationStage.COLLECT_REQUIREMENTS, handle_collect_requirements),
+            (OrderCreationStage.VALIDATE_CONFIGURATION, handle_validate_configuration),
+        ):
+            with self.subTest(stage=stage):
+                state = complete_customer_state()
+                state.current_stage = stage
+                state.phone = None
+                returned = []
+
+                def capture(current):
+                    result = handler(current)
+                    returned.append(result)
+                    return result
+
+                with patch(f"order_creation_controller.{handler.__name__}", side_effect=capture):
+                    result = execute_order_creation_workflow(state)
+                self.assertIs(result, returned[0])
+                self.assertEqual(result.current_stage, "COLLECT_REQUIREMENTS")
+                self.assertEqual(result.required_input, ["phone"])
+
+    def test_automatically_dispatches_collection_to_validation(self):
+        for room, reason in (
+            ("1m x 1m", BusinessResultReason.ROOM_SIZE_UNSUITABLE),
+            ("large", BusinessResultReason.MISSING_REQUIRED_INFORMATION),
+        ):
+            with self.subTest(room=room):
+                state = complete_customer_state()
+                state.room_size = room
+                result = execute_order_creation_workflow(state)
+                self.assertEqual(result.reason, reason)
+                self.assertEqual(result.current_stage, "VALIDATE_CONFIGURATION")
+                self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
+
+    def test_successful_validation_keeps_progress_at_unimplemented_boundary(self):
+        state = complete_customer_state()
+        with self.assertRaisesRegex(NotImplementedError, "CONFIGURATION_CONFIRMATION"):
+            execute_order_creation_workflow(state)
+        self.assertEqual(state.current_stage, OrderCreationStage.CONFIGURATION_CONFIRMATION)
+        self.assertEqual(state.status, OrderWorkflowStatus.ACTIVE)
+        self.assertEqual(state.room_size_validation_result, "SUITABLE")
+        self.assertIsNone(state.failure_reason)
+        self.assertIsNone(state.order_id)
+
+    def test_direct_unimplemented_stages_do_not_mutate(self):
+        for stage in OrderCreationStage:
+            if stage in (OrderCreationStage.COLLECT_REQUIREMENTS, OrderCreationStage.VALIDATE_CONFIGURATION):
+                continue
+            with self.subTest(stage=stage):
+                state = complete_customer_state()
+                state.current_stage = stage
+                before = state.model_dump_json()
+                with self.assertRaisesRegex(NotImplementedError, stage.value):
+                    execute_order_creation_workflow(state)
+                self.assertEqual(state.model_dump_json(), before)
+
+    def test_invalid_entry_rejected_without_dispatch_or_mutation(self):
+        cases = [("status", status) for status in (
+            OrderWorkflowStatus.COMPLETED, OrderWorkflowStatus.FAILED,
+            OrderWorkflowStatus.CANCELLED,
+        )]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                state = complete_customer_state()
+                setattr(state, field, value)
+                before = state.model_dump_json()
+                with patch("order_creation_controller.handle_collect_requirements") as handler:
+                    with self.assertRaises(ValueError):
+                        execute_order_creation_workflow(state)
+                handler.assert_not_called()
+                self.assertEqual(state.model_dump_json(), before)
+
+    def test_none_without_advancement_is_rejected(self):
+        with patch("order_creation_controller.handle_collect_requirements", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "without stage advancement"):
+                execute_order_creation_workflow(complete_customer_state())
+
+    def test_internal_cycle_is_rejected(self):
+        def back_to_collection(state):
+            state.current_stage = OrderCreationStage.COLLECT_REQUIREMENTS
+
+        with patch("order_creation_controller.handle_validate_configuration", side_effect=back_to_collection) as handler:
+            with self.assertRaisesRegex(RuntimeError, "cycle"):
+                execute_order_creation_workflow(complete_customer_state())
+        self.assertEqual(handler.call_count, 1)
+
+    def test_unexpected_handler_return_is_rejected(self):
+        for value in (False, {}, "unexpected"):
+            with self.subTest(value=value):
+                with patch("order_creation_controller.handle_collect_requirements", return_value=value):
+                    with self.assertRaisesRegex(RuntimeError, "Unexpected handler return"):
+                        execute_order_creation_workflow(complete_customer_state())
+
+    def test_non_active_continuation_is_rejected(self):
+        for status in (OrderWorkflowStatus.AWAITING_USER_INPUT, OrderWorkflowStatus.COMPLETED,
+                       OrderWorkflowStatus.FAILED, OrderWorkflowStatus.CANCELLED):
+            with self.subTest(status=status):
+                def invalid_continuation(state):
+                    state.current_stage = OrderCreationStage.VALIDATE_CONFIGURATION
+                    state.status = status
+
+                with patch("order_creation_controller.handle_collect_requirements", side_effect=invalid_continuation):
+                    with self.assertRaisesRegex(RuntimeError, "continuation requires status=ACTIVE"):
+                        execute_order_creation_workflow(complete_customer_state())
+
+    def test_cycle_tracking_resets_between_customer_turns(self):
+        state = complete_customer_state()
+        state.room_size = "1m x 1m"
+        first = execute_order_creation_workflow(state)
+        second = execute_order_creation_workflow(state)
+        self.assertEqual(first.reason, second.reason)
+        state.room_size = "5.2m x 4m"
+        with self.assertRaisesRegex(NotImplementedError, "CONFIGURATION_CONFIRMATION"):
+            execute_order_creation_workflow(state)
 
 
 if __name__ == "__main__":
