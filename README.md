@@ -1,3 +1,135 @@
+目前我们已经完成了 **ATS Multi-Agent Support System 中 `ORDER_CREATE_WF` 的核心 MVP 到 Stage 8**。
+
+整体进度可以最简化成：
+
+```text
+Customer Message + Ht + Wt
+        ↓
+Order Agent
+        ↓
+LLM Extraction
+        ↓
+Structured Update / Merge
+        ↓
+Workflow Controller
+        ↓
+COLLECT_REQUIREMENTS
+        ↓
+VALIDATE_CONFIGURATION
+        ↓
+CONFIGURATION_CONFIRMATION
+```
+
+目前完成的主要内容是：
+
+1. **Workflow State / BusinessResult**
+
+   * 建立 `OrderCreationState (Wt)`
+   * 定义 workflow stage、status、tracking fields
+   * 建立统一 `BusinessResult`
+
+2. **COLLECT_REQUIREMENTS**
+
+   * 判断 required customer information 是否完整
+   * 缺信息 → `NEEDS_USER_INPUT`
+   * 完整 → 自动进入 `VALIDATE_CONFIGURATION`
+
+3. **VALIDATE_CONFIGURATION**
+
+   * 当前 MVP 只验证：
+     **table size + room size**
+   * 使用 57-inch cue minimum-room-size rule
+   * unsuitable → 要求客户修改 `table_size`
+   * suitable → 进入 `CONFIGURATION_CONFIRMATION`
+
+4. **Workflow Controller**
+
+   * 已有真正的 controller execution loop
+   * 根据 `current_stage` 调用对应 handler
+   * `None` 表示内部继续执行
+   * `BusinessResult` 表示 workflow 暂停并需要外部响应
+
+5. **Structured State Update**
+
+   * `ExtractedOrderInformation`
+   * 可以安全地把 customer 更新 merge 到 Wt
+   * required / optional / null / nested address 等规则已经处理
+
+6. **LLM Information Extraction**
+
+   * 使用 `qwen3:8b`
+   * Input：
+     **current message + Ht (conversation history) + Wt**
+   * 能利用上下文理解：
+
+     > “7ft or 8ft?” → “The bigger one.” → `8ft`
+
+7. **Order Agent**
+
+   * 已实现内部 orchestration：
+
+```text
+Extraction
+   ↓
+Merge
+   ↓
+Controller-owned re-entry
+   ↓
+Workflow Controller
+```
+
+8. **CONFIGURATION_CONFIRMATION + Multi-turn 修改**
+
+   * 系统可以生成当前 configuration snapshot 并等待 customer confirmation
+   * 如果 customer 改配置，例如：
+
+```text
+"I changed my mind. I want green felt."
+```
+
+系统会：
+
+```text
+CONFIGURATION_CONFIRMATION
+        ↓
+COLLECT_REQUIREMENTS
+        ↓
+更新 felt_color
+        ↓
+VALIDATE_CONFIGURATION
+        ↓
+CONFIGURATION_CONFIRMATION
+```
+
+也就是说，我们现在已经有了一个真正的 **multi-turn workflow loop**。
+
+### 当前还没有做的
+
+最重要的是：
+
+```text
+Customer: "Yes."
+        ↓
+确认当前 configuration
+        ↓
+PRICING
+        ↓
+...
+        ↓
+CREATE_ORDER
+```
+
+所以目前系统已经能够：
+
+> **收集订单信息 → 理解上下文 → 更新 Wt → 验证 table/room configuration → 请求确认 → 客户修改后重新走 workflow。**
+
+但还没有实现：
+
+> **理解 Yes/No confirmation → Pricing → Final Confirmation → 真正 Create Order。**
+
+当前最新版本是 **Stage 8 commit `3403ca7`**，Stage 8 测试结果为 **80 passed、2 skipped、0 failed**。
+
+=========================================
 # DevNous Minimal Local Prototype
 
 This repository contains a minimal local reproduction of the core workflow described in the DevNous multi-agent architecture.
