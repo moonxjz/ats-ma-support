@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from business_result import BusinessResultReason, BusinessResultStatus
-from order_creation_controller import handle_collect_requirements
+from order_creation_controller import handle_collect_requirements, handle_validate_configuration
 from order_creation_state import (
     OrderCreationStage,
     OrderCreationState,
@@ -127,6 +127,147 @@ class CollectRequirementsTests(unittest.TestCase):
         state.missing_customer_fields.clear()
         self.assertEqual(second.data["missing_fields"], list(REQUIRED_CUSTOMER_FIELDS))
         self.assertEqual(second.required_input, ["customer_name"])
+
+
+class ValidateConfigurationTests(unittest.TestCase):
+    def validation_state(self):
+        state = complete_customer_state()
+        state.current_stage = OrderCreationStage.VALIDATE_CONFIGURATION
+        return state
+
+    def test_collection_then_suitable_validation_continues(self):
+        state = complete_customer_state()
+        self.assertIsNone(handle_collect_requirements(state))
+        self.assertIsNone(handle_validate_configuration(state))
+        self.assertEqual(state.current_stage, OrderCreationStage.CONFIGURATION_CONFIRMATION)
+        self.assertEqual(state.status, OrderWorkflowStatus.ACTIVE)
+        self.assertEqual(state.room_size_validation_result, "SUITABLE")
+        self.assertIsNone(state.pending_field)
+        self.assertIsNone(state.order_id)
+        self.assertNotIn("result_status", state.model_dump())
+
+    def test_unsuitable_waits_for_table_size(self):
+        state = self.validation_state()
+        state.room_size = "4.9m x 3.8m"
+        result = handle_validate_configuration(state)
+        self.assertEqual(state.current_stage, OrderCreationStage.VALIDATE_CONFIGURATION)
+        self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
+        self.assertEqual(state.pending_field, "table_size")
+        self.assertEqual(state.room_size_validation_result, "UNSUITABLE")
+        self.assertEqual(result.result_status, BusinessResultStatus.NEEDS_USER_INPUT)
+        self.assertEqual(result.reason, BusinessResultReason.ROOM_SIZE_UNSUITABLE)
+        self.assertEqual(result.required_input, ["table_size"])
+        self.assertEqual(result.current_stage, "VALIDATE_CONFIGURATION")
+        self.assertEqual(result.data, {
+            "room_size": "4.9m x 3.8m", "requested_table_size": "8ft",
+            "suitable_table_sizes": ["7ft"],
+        })
+
+    def test_unusable_values_are_preserved_and_requested_one_at_a_time(self):
+        state = self.validation_state()
+        state.table_size, state.room_size = "6ft", "large"
+        state.room_size_validation_result = "SUITABLE"
+        for field in ("table_size", "room_size"):
+            result = handle_validate_configuration(state)
+            self.assertEqual(result.required_input, [field])
+            self.assertEqual(state.pending_field, field)
+            self.assertEqual(result.reason, BusinessResultReason.MISSING_REQUIRED_INFORMATION)
+            self.assertEqual(result.result_status, BusinessResultStatus.NEEDS_USER_INPUT)
+            self.assertEqual(result.current_stage, "VALIDATE_CONFIGURATION")
+            self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
+            self.assertIsNone(state.room_size_validation_result)
+            self.assertEqual(state.missing_customer_fields, [])
+            self.assertEqual(state.room_size, "large")
+            self.assertEqual(state.table_size, "6ft" if field == "table_size" else "8ft")
+            state.table_size = "8ft"
+        self.assertEqual(state.pending_system_fields, ["room_size_validation_result"])
+        state.room_size = "5.2m x 4m"
+        self.assertIsNone(handle_validate_configuration(state))
+        self.assertEqual(state.pending_system_fields, [])
+
+    def test_validator_required_input_is_copied_into_result(self):
+        state = self.validation_state()
+        validation = {
+            "result": None,
+            "required_input": ["room_size"],
+            "input_details": {"field": "room_size"},
+        }
+        with patch("order_creation_controller.validate_room_size", return_value=validation):
+            result = handle_validate_configuration(state)
+        self.assertEqual(state.pending_field, validation["required_input"][0])
+        self.assertEqual(result.required_input, validation["required_input"])
+        self.assertIsNot(result.required_input, validation["required_input"])
+        validation["required_input"].clear()
+        self.assertEqual(result.required_input, ["room_size"])
+
+    def test_either_corrected_value_is_reevaluated(self):
+        for field, value in (("table_size", "7ft"), ("room_size", "5.2m x 4m")):
+            with self.subTest(field=field):
+                state = self.validation_state()
+                state.room_size = "4.9m x 3.8m"
+                handle_validate_configuration(state)
+                setattr(state, field, value)
+                self.assertIsNone(handle_validate_configuration(state))
+                self.assertEqual(state.room_size_validation_result, "SUITABLE")
+
+    def test_missing_information_delegates_and_returns_identical_result(self):
+        state = self.validation_state()
+        state.phone = None
+        state.room_size_validation_result = "SUITABLE"
+        returned = []
+        def collect(current):
+            result = handle_collect_requirements(current)
+            returned.append(result)
+            return result
+        with patch("order_creation_controller.handle_collect_requirements", side_effect=collect) as handler:
+            result = handle_validate_configuration(state)
+        handler.assert_called_once_with(state)
+        self.assertIs(result, returned[0])
+        self.assertEqual(result.current_stage, "COLLECT_REQUIREMENTS")
+        self.assertEqual(state.current_stage, OrderCreationStage.COLLECT_REQUIREMENTS)
+        self.assertEqual(result.required_input, ["phone"])
+        self.assertIsNone(state.room_size_validation_result)
+        self.assertIn("room_size_validation_result", state.pending_system_fields)
+
+    def test_unrelated_state_preserved_on_every_branch(self):
+        mutable = {"missing_customer_fields", "pending_system_fields", "pending_field",
+                   "status", "current_stage", "updated_at", "room_size_validation_result"}
+        for branch in ("suitable", "unsuitable", "unusable", "missing"):
+            with self.subTest(branch=branch):
+                state = self.validation_state()
+                if branch == "unsuitable": state.room_size = "1m x 1m"
+                if branch == "unusable": state.room_size = "large"
+                if branch == "missing": state.phone = None
+                state.last_question = "Existing wording"
+                state.conflicting_fields = {"table_size": ["7ft", "8ft"]}
+                state.pending_confirmations = ["final_order_confirmed"]
+                state.pending_system_fields = ["product_sku", "room_size_validation_result", "total_price"]
+                state.failure_reason = "Existing diagnostic"
+                before = state.model_dump()
+                now = "2026-01-02T00:00:00+00:00"
+                with patch("order_creation_controller.current_utc_time", return_value=now):
+                    handle_validate_configuration(state)
+                self.assertEqual(state.updated_at, now)
+                self.assertEqual(
+                    {k: v for k, v in before.items() if k not in mutable},
+                    {k: v for k, v in state.model_dump().items() if k not in mutable},
+                )
+                expected = ["product_sku", "total_price"] if branch in ("suitable", "unsuitable") else before["pending_system_fields"]
+                self.assertEqual(state.pending_system_fields, expected)
+
+    def test_invalid_invocation_does_not_mutate(self):
+        cases = [("current_stage", s) for s in OrderCreationStage
+                 if s != OrderCreationStage.VALIDATE_CONFIGURATION]
+        cases += [("status", s) for s in (OrderWorkflowStatus.COMPLETED,
+                  OrderWorkflowStatus.FAILED, OrderWorkflowStatus.CANCELLED)]
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                state = self.validation_state()
+                setattr(state, field, value)
+                before = state.model_dump_json()
+                with self.assertRaises(ValueError):
+                    handle_validate_configuration(state)
+                self.assertEqual(state.model_dump_json(), before)
 
 
 if __name__ == "__main__":
