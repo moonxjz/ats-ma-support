@@ -2,11 +2,12 @@
 
 from order_creation_confirmation import ConfirmationIntent, ConfirmationInterpretation
 from order_creation_catalog import (
-    CUSTOMIZATION_CATEGORIES, lookup_base_product, lookup_product_option,
+    CUSTOMIZATION_CATEGORIES, lookup_base_product, lookup_product_option, lookup_product_pricing,
 )
 
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
-from order_creation_rules import build_configuration_snapshot, validate_room_size
+from order_creation_rules import build_configuration_snapshot, validate_room_size, calculate_total_price
+from order_creation_shipping import lookup_shipping_rate
 from order_creation_updates import ExtractedOrderInformation
 from order_creation_state import (
     OrderCreationStage,
@@ -51,6 +52,7 @@ def execute_order_creation_workflow(
             OrderCreationStage.COLLECT_REQUIREMENTS,
             OrderCreationStage.VALIDATE_CONFIGURATION,
             OrderCreationStage.CONFIGURATION_CONFIRMATION,
+            OrderCreationStage.PRICING,
         }:
             raise NotImplementedError(f"Workflow stage is not implemented: {stage.value}")
         if stage in visited_stages:
@@ -61,6 +63,8 @@ def execute_order_creation_workflow(
             result = handle_collect_requirements(state)
         elif stage == OrderCreationStage.VALIDATE_CONFIGURATION:
             result = handle_validate_configuration(state)
+        elif stage == OrderCreationStage.PRICING:
+            result = handle_pricing(state)
         else:
             if confirmation is None and confirmation_snapshot is None:
                 result = handle_configuration_confirmation(state)
@@ -216,6 +220,42 @@ def handle_validate_configuration(state: OrderCreationState) -> BusinessResult |
         data=data,
         error=None,
     )
+
+
+def handle_pricing(state: OrderCreationState) -> BusinessResult | None:
+    """Price the confirmed configuration; publish derived values only on success."""
+    if state.current_stage != OrderCreationStage.PRICING or state.status != OrderWorkflowStatus.ACTIVE:
+        raise ValueError("Pricing requires current_stage=PRICING and status=ACTIVE.")
+    if state.configuration_confirmed is not True:
+        raise ValueError("Pricing requires configuration confirmation.")
+    if not state.order_snapshot or state.order_snapshot != build_configuration_snapshot(state):
+        raise ValueError("Pricing requires the unchanged confirmed configuration snapshot.")
+    if type(state.quantity) is not int or state.quantity < 1:
+        raise ValueError("Pricing requires a positive integer quantity, not bool.")
+    postcode = state.delivery_address.postcode
+    if not isinstance(postcode, str) or not postcode.strip():
+        raise ValueError("Pricing requires a supplied delivery postcode.")
+
+    product = lookup_product_pricing(
+        product_model=state.product_model, table_size=state.table_size,
+        **{field: getattr(state, field) for field in CUSTOMIZATION_CATEGORIES},
+    )
+    shipping = lookup_shipping_rate(state.table_size, postcode)
+    totals = calculate_total_price(product["unit_price"], shipping["per_table_shipping_rate"], state.quantity)
+    completed_fields = {"product_sku", "customisation_price", "unit_price", "shipping_cost", "total_price"}
+    pending = [field for field in state.pending_system_fields if field not in completed_fields]
+    now = current_utc_time()
+
+    state.product_sku = product["product_sku"]
+    state.customisation_price = product["customisation_price"]
+    state.unit_price = product["unit_price"]
+    state.shipping_cost = totals["shipping_cost"]
+    state.total_price = totals["total_price"]
+    state.pending_system_fields = pending
+    state.current_stage = OrderCreationStage.FINAL_CONFIRMATION
+    state.status = OrderWorkflowStatus.ACTIVE
+    state.updated_at = now
+    return None
 
 
 def apply_order_creation_reentry(

@@ -76,3 +76,21 @@ def build_configuration_snapshot(state: OrderCreationState) -> dict:
         "product_model", "table_size", "timber", "timber_painting",
         "felt_color", "bracket", "top_profile", "quantity",
     )}
+
+
+def calculate_total_price(
+    unit_price: Decimal, per_table_shipping_rate: Decimal, quantity: int,
+) -> dict:
+    """Calculate order totals without side effects or binary float conversion.
+
+    MVP ASSUMPTION: freight is charged per table, not per order. This is not
+    established ATS production freight policy.
+    """
+    if type(quantity) is not int or quantity < 1:
+        raise ValueError("Quantity must be a positive integer, not bool.")
+    for value in (unit_price, per_table_shipping_rate):
+        if not isinstance(value, Decimal) or not value.is_finite() or value < 0:
+            raise ValueError("Money must be a finite, non-negative Decimal.")
+    shipping_cost = per_table_shipping_rate * quantity
+    return {"shipping_cost": shipping_cost,
+            "total_price": unit_price * quantity + shipping_cost}

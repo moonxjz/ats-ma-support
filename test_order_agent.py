@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import unittest
+from decimal import Decimal
 from unittest.mock import Mock, call, patch
 
 from pydantic import ValidationError
@@ -300,20 +301,24 @@ class OrderAgentTests(unittest.TestCase):
                 process_order_creation_message("No, change it", [], state)
                 self.interpret.assert_not_called()
 
-    def test_same_value_confirmation_reaches_pricing_and_preserves_inputs(self):
+    def test_same_value_confirmation_prices_and_preserves_inputs(self):
         state = complete_customer_state()
         execute_order_creation_workflow(state)
         before, history_before = state.model_dump(), deepcopy(self.history)
         self.extract.return_value = ExtractedOrderInformation(table_size="8ft")
         self.interpret.return_value = ConfirmationInterpretation(intent="CONFIRMED")
         with patch("order_agent.execute_order_creation_workflow", wraps=execute_order_creation_workflow) as execute:
-            with self.assertRaisesRegex(NotImplementedError, "PRICING"):
+            with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
                 process_order_creation_message("Yes, 8ft is correct", self.history, state)
         self.interpret.assert_called_once()
         working = self.interpret.call_args.args[2]
         self.assertIs(working, execute.call_args.args[0])
         self.assertTrue(working.configuration_confirmed)
-        self.assertEqual(working.current_stage, OrderCreationStage.PRICING)
+        self.assertEqual(working.current_stage, OrderCreationStage.FINAL_CONFIRMATION)
+        self.assertEqual(working.unit_price, Decimal("6050"))
+        self.assertEqual(working.shipping_cost, Decimal("530"))
+        self.assertEqual(working.total_price, Decimal("6580"))
+        self.assertEqual(working.order_snapshot, state.order_snapshot)
         self.assertIsNone(working.failure_reason)
         self.assertEqual(state.model_dump(), before)
         self.assertEqual(self.history, history_before)

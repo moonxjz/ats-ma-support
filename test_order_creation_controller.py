@@ -1,6 +1,7 @@
 """In-memory tests for the Stage 2 collection handler."""
 
 import unittest
+from decimal import Decimal
 from unittest.mock import patch
 
 from business_result import BusinessResultReason, BusinessResultStatus
@@ -10,6 +11,7 @@ from order_creation_controller import (
     handle_configuration_confirmation,
     handle_collect_requirements,
     handle_validate_configuration,
+    handle_pricing,
 )
 from order_creation_state import (
     OrderCreationStage,
@@ -427,7 +429,7 @@ class WorkflowExecutionTests(unittest.TestCase):
 
     def test_direct_unimplemented_stages_do_not_mutate(self):
         for stage in OrderCreationStage:
-            if stage in (OrderCreationStage.COLLECT_REQUIREMENTS, OrderCreationStage.VALIDATE_CONFIGURATION, OrderCreationStage.CONFIGURATION_CONFIRMATION):
+            if stage in (OrderCreationStage.COLLECT_REQUIREMENTS, OrderCreationStage.VALIDATE_CONFIGURATION, OrderCreationStage.CONFIGURATION_CONFIRMATION, OrderCreationStage.PRICING):
                 continue
             with self.subTest(stage=stage):
                 state = complete_customer_state()
@@ -633,6 +635,115 @@ class ConfirmationAndReentryTests(unittest.TestCase):
                     self.assertEqual(updated.order_snapshot, {})
 
 
+class PricingTests(unittest.TestCase):
+    def pricing_state(self, quantity=2, postcode="3000"):
+        from order_creation_rules import build_configuration_snapshot
+        state = complete_customer_state()
+        state.bracket = "Stainless Steel"
+        state.quantity = quantity
+        state.delivery_address.postcode = postcode
+        state.current_stage = OrderCreationStage.PRICING
+        state.configuration_confirmed = True
+        state.order_snapshot = build_configuration_snapshot(state)
+        return state
+
+    def test_exact_values_and_only_approved_mutations(self):
+        state = self.pricing_state()
+        state.pending_system_fields = ["other", "product_sku", "unit_price", "customisation_price",
+                                       "shipping_cost", "total_price", "shipping_method", "total_price", "other"]
+        state.last_question = "Keep wording"
+        state.failure_reason = "Keep diagnostic"
+        state.conflicting_fields = {"felt_color": ["Blue"]}
+        state.pending_field = "keep tracking"
+        before = state.model_dump()
+        snapshot = state.order_snapshot
+        with patch("order_creation_controller.current_utc_time", return_value="fixed"):
+            self.assertIsNone(handle_pricing(state))
+        expected = {**before, "product_sku": "B8ODYSSEY", "customisation_price": Decimal("1550"),
+                    "unit_price": Decimal("6800"), "shipping_cost": Decimal("1060"),
+                    "total_price": Decimal("14660"), "pending_system_fields": ["other", "shipping_method", "other"],
+                    "current_stage": OrderCreationStage.FINAL_CONFIRMATION, "updated_at": "fixed"}
+        self.assertEqual(state.model_dump(), expected)
+        self.assertIs(state.order_snapshot, snapshot)
+        self.assertTrue(state.configuration_confirmed)
+
+    def test_unknown_postcode_completes_under_mvp_assumption(self):
+        state = self.pricing_state(postcode="3152")
+        state.pending_system_fields = ["shipping_cost", "total_price"]
+        self.assertIsNone(handle_pricing(state))
+        self.assertEqual(state.shipping_cost, Decimal("0"))
+        self.assertEqual(state.total_price, Decimal("13600"))
+        self.assertEqual(state.pending_system_fields, [])
+        self.assertIsNone(state.failure_reason)
+        self.assertIsNone(state.shipping_method)
+
+    def test_invalid_prerequisites_do_not_mutate_or_lookup(self):
+        cases = [("current_stage", stage) for stage in OrderCreationStage if stage != OrderCreationStage.PRICING]
+        cases += [("status", status) for status in OrderWorkflowStatus if status != OrderWorkflowStatus.ACTIVE]
+        cases += [("configuration_confirmed", False), ("order_snapshot", {}),
+                  ("order_snapshot", {"table_size": "8ft"}), ("felt_color", "Blue"),
+                  ("quantity", 0), ("quantity", -1), ("quantity", True), ("quantity", 2.0)]
+        for field, value in cases:
+            state = self.pricing_state()
+            setattr(state, field, value)
+            # Compare attributes without serializing deliberately corrupted types.
+            before = state.model_copy(deep=True)
+            with self.subTest(field=field, value=value), \
+                 patch("order_creation_controller.lookup_product_pricing") as product:
+                with self.assertRaises(ValueError):
+                    handle_pricing(state)
+                product.assert_not_called()
+            self.assertEqual(state, before)
+        for postcode in (None, "", "  "):
+            state = self.pricing_state(postcode=postcode)
+            before = state.model_copy(deep=True)
+            with self.assertRaises(ValueError):
+                handle_pricing(state)
+            self.assertEqual(state, before)
+
+    def test_lookup_calculation_and_clock_failures_leave_state_unchanged(self):
+        cases = [("lookup_product_pricing", LookupError("missing product")),
+                 ("lookup_shipping_rate", LookupError("missing rate")),
+                 ("lookup_shipping_rate", ValueError("corrupt data")),
+                 ("calculate_total_price", ValueError("invalid money")),
+                 ("current_utc_time", RuntimeError("clock failure"))]
+        for target, error in cases:
+            state = self.pricing_state()
+            state.product_sku = "old SKU"
+            state.unit_price = Decimal("1")
+            state.customisation_price = Decimal("2")
+            state.shipping_cost = Decimal("3")
+            state.total_price = Decimal("4")
+            state.pending_system_fields = ["unit_price", "shipping_cost", "other"]
+            before = state.model_dump()
+            with self.subTest(target=target), patch("order_creation_controller." + target, side_effect=error):
+                with self.assertRaises(type(error)) as caught:
+                    handle_pricing(state)
+                self.assertIs(caught.exception, error)
+            self.assertEqual(state.model_dump(), before)
+
+    def test_confirmed_noncanonical_or_missing_catalog_value_is_exception(self):
+        from order_creation_rules import build_configuration_snapshot
+        for value, error in ((" blue ", ValueError), ("Green", LookupError)):
+            state = self.pricing_state()
+            state.felt_color = value
+            state.order_snapshot = build_configuration_snapshot(state)
+            before = state.model_dump()
+            with self.assertRaises(error):
+                handle_pricing(state)
+            self.assertEqual(state.model_dump(), before)
+
+    def test_controller_boundary_preserves_priced_progress(self):
+        state = self.pricing_state(quantity=1)
+        with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
+            execute_order_creation_workflow(state)
+        self.assertEqual(state.current_stage, OrderCreationStage.FINAL_CONFIRMATION)
+        self.assertEqual(state.status, OrderWorkflowStatus.ACTIVE)
+        self.assertEqual(state.total_price, Decimal("7330"))
+        self.assertIsNone(state.failure_reason)
+        self.assertIsNone(state.order_id)
+
+
 class ConfirmationAcceptanceTests(unittest.TestCase):
     def setUp(self):
         from order_creation_confirmation import ConfirmationInterpretation
@@ -641,7 +752,7 @@ class ConfirmationAcceptanceTests(unittest.TestCase):
         execute_order_creation_workflow(self.state)
         self.snapshot = self.state.order_snapshot.copy()
 
-    def test_accept_exact_snapshot_then_pricing_boundary(self):
+    def test_accept_exact_snapshot_then_final_confirmation_boundary(self):
         snapshot_object = self.state.order_snapshot
         with patch("order_creation_controller.current_utc_time", return_value="fixed"):
             self.assertIsNone(handle_configuration_confirmation(
@@ -654,16 +765,16 @@ class ConfirmationAcceptanceTests(unittest.TestCase):
         self.assertEqual(self.state.updated_at, "fixed")
         self.assertIs(self.state.order_snapshot, snapshot_object)
         self.assertEqual(self.state.order_snapshot, self.snapshot)
-        with self.assertRaisesRegex(NotImplementedError, "PRICING"):
+        with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
             execute_order_creation_workflow(self.state)
         self.assertIsNone(self.state.failure_reason)
 
-    def test_executor_continues_to_pricing_without_business_result(self):
-        with self.assertRaisesRegex(NotImplementedError, "PRICING"):
+    def test_executor_continues_through_pricing_without_business_result(self):
+        with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
             execute_order_creation_workflow(self.state, confirmation=self.confirmed,
                                             confirmation_snapshot=self.snapshot)
         self.assertTrue(self.state.configuration_confirmed)
-        self.assertEqual(self.state.current_stage, OrderCreationStage.PRICING)
+        self.assertEqual(self.state.current_stage, OrderCreationStage.FINAL_CONFIRMATION)
         self.assertEqual(self.state.status, OrderWorkflowStatus.ACTIVE)
 
     def test_invalid_acceptance_rejected_before_mutation(self):

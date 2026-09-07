@@ -3,7 +3,7 @@
 import unittest
 from decimal import Decimal
 
-from order_creation_rules import DEMO_CUE_LENGTH_INCHES, build_configuration_snapshot, validate_room_size
+from order_creation_rules import DEMO_CUE_LENGTH_INCHES, build_configuration_snapshot, validate_room_size, calculate_total_price
 
 
 class RoomSizeRulesTests(unittest.TestCase):
@@ -71,6 +71,32 @@ class ConfigurationSnapshotTests(unittest.TestCase):
         first.clear()
         self.assertEqual(second, expected)
         self.assertEqual(state.model_dump(), before)
+
+
+class TotalPriceTests(unittest.TestCase):
+    def test_exact_decimal_totals_and_per_table_mvp_shipping(self):
+        for quantity, shipping, total in ((1, "530", "5780"), (2, "1060", "11560")):
+            self.assertEqual(calculate_total_price(Decimal("5250"), Decimal("530"), quantity),
+                             {"shipping_cost": Decimal(shipping), "total_price": Decimal(total)})
+        self.assertEqual(calculate_total_price(Decimal("0.10"), Decimal("0.20"), 3),
+                         {"shipping_cost": Decimal("0.60"), "total_price": Decimal("0.90")})
+        self.assertEqual(calculate_total_price(Decimal("6800"), Decimal("0"), 2)["total_price"], Decimal("13600"))
+
+    def test_invalid_inputs(self):
+        for quantity in (True, False, 0, -1, 1.0, "2", None):
+            with self.subTest(quantity=quantity), self.assertRaises(ValueError):
+                calculate_total_price(Decimal("1"), Decimal("0"), quantity)
+        for value in (None, "1", 1, 1.0, Decimal("-1"), Decimal("NaN"), Decimal("Infinity"), Decimal("sNaN")):
+            for first in (True, False):
+                with self.subTest(value=value, first=first), self.assertRaises(ValueError):
+                    calculate_total_price(value if first else Decimal("1"), Decimal("0") if first else value, 1)
+
+    def test_repeatable_independent_results(self):
+        first = calculate_total_price(Decimal("5250"), Decimal("530"), 2)
+        second = calculate_total_price(Decimal("5250"), Decimal("530"), 2)
+        self.assertEqual(first, second)
+        first.clear()
+        self.assertEqual(second["total_price"], Decimal("11560"))
 
 
 if __name__ == "__main__":

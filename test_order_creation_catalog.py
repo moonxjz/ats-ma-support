@@ -1,12 +1,13 @@
 """Deterministic tests against the owner-supplied catalog fixture."""
 
 from collections import Counter
+from decimal import Decimal
 import json
 import unittest
 from unittest.mock import patch
 
 from order_creation_catalog import (
-    CATALOG_PATH, list_product_options, lookup_base_product, lookup_product_option,
+    CATALOG_PATH, list_product_options, lookup_base_product, lookup_product_option, lookup_product_pricing,
 )
 
 
@@ -76,6 +77,58 @@ class CatalogTests(unittest.TestCase):
         with patch("pathlib.Path.read_text", side_effect=FileNotFoundError("missing")):
             with self.assertRaises(FileNotFoundError):
                 lookup_product_option("Felt", "Blue")
+
+
+class ProductPricingTests(unittest.TestCase):
+    def setUp(self):
+        self.values = dict(product_model="Odyssey", table_size="8ft",
+                           top_profile="Bull-nose Edge - with black steel side skirt",
+                           bracket="Standard rubber", felt_color="Blue", timber="Tassie Oak",
+                           timber_painting="Natural")
+
+    def test_base_and_zero_adjustments(self):
+        result = lookup_product_pricing(**self.values)
+        self.assertEqual(result["product_sku"], "B8ODYSSEY")
+        self.assertEqual(result["base_price"], Decimal("5250"))
+        self.assertEqual(result["customisation_price"], Decimal("0"))
+        self.assertEqual(result["unit_price"], Decimal("5250"))
+        self.assertEqual(len(result["option_adjustments"]), 5)
+        self.assertTrue(all(v == Decimal("0") for v in result["option_adjustments"].values()))
+
+    def test_multiple_adjustments_and_exact_source_sku(self):
+        self.values.update(top_profile="Waterfall", bracket="Stainless Steel")
+        before = self.values.copy()
+        result = lookup_product_pricing(**self.values)
+        self.assertEqual(result["option_adjustments"]["top_profile"], Decimal("800"))
+        self.assertEqual(result["option_adjustments"]["bracket"], Decimal("750"))
+        self.assertEqual(result["customisation_price"], Decimal("1550"))
+        self.assertEqual(result["unit_price"], Decimal("6800"))
+        self.assertEqual(self.values, before)
+        self.values.update(product_model="Saga", table_size="7ft")
+        self.assertEqual(lookup_product_pricing(**self.values)["product_sku"], "\tB7SAGA")
+
+    def test_noncanonical_and_unresolvable_inputs_are_not_corrected(self):
+        for field in self.values:
+            for value, error in ((" " + self.values[field] + " ", ValueError),
+                                 ("Unknown", LookupError), (None, ValueError)):
+                values = {**self.values, field: value}
+                before = values.copy()
+                with self.subTest(field=field, value=value), self.assertRaises(error):
+                    lookup_product_pricing(**values)
+                self.assertEqual(values, before)
+
+    def test_fractional_prices_and_technical_errors(self):
+        records = json.loads(CATALOG_PATH.read_text())["records"]
+        for record in records:
+            if record["title"] == "Odyssey 8ft":
+                record["price"] = "5250.10"
+            if record["category"] == "Felt" and record["title"] == "Blue":
+                record["price"] = "0.20"
+        with patch("pathlib.Path.read_text", return_value=json.dumps({"records": records})):
+            self.assertEqual(lookup_product_pricing(**self.values)["unit_price"], Decimal("5250.30"))
+        with patch("order_creation_catalog.lookup_base_product", side_effect=OSError("unavailable")):
+            with self.assertRaises(OSError):
+                lookup_product_pricing(**self.values)
 
 
 if __name__ == "__main__":

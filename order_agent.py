@@ -25,7 +25,7 @@ def process_order_creation_message(
     Technical exceptions propagate unchanged. The controller-owned re-entry
     policy prepares changed requirements before stage execution. Normal unconfirmed
     configurations return a confirmation request. Accepted confirmation advances
-    to unimplemented PRICING and raises before this function returns its working
+    through PRICING to unimplemented FINAL_CONFIRMATION and raises before returning its working
     copy; caller-owned Wt remains unchanged at that temporary boundary.
     """
     extracted = extract_order_information(

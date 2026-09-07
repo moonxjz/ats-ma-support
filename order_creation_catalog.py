@@ -2,7 +2,7 @@
 
 Only 7/8/9ft have complete demo catalog + room-rule coverage. This is an
 MVP restriction, not an ATS production rule; the fixture retains 6ft records.
-Prices remain source decimal strings here; no pricing is performed.
+Source prices remain decimal strings; pricing results use Decimal arithmetic.
 """
 
 import json
@@ -97,3 +97,39 @@ def lookup_base_product(product_model: str, table_size: str) -> dict:
     match = next((r for r in selected
                   if _normalize(r["table_size"]) == _normalize(table_size)), None)
     return {"record": match, "field": "table_size", "allowed_values": sizes}
+
+
+def lookup_product_pricing(
+    *, product_model: str, table_size: str, top_profile: str, bracket: str,
+    felt_color: str, timber: str, timber_painting: str,
+) -> dict:
+    """Price canonical confirmed selections using the existing catalog tools.
+
+    Option prices are per-table adjustments. This never canonicalizes inputs,
+    mutates workflow state, or manufactures a configured SKU.
+    """
+    selections = dict(top_profile=top_profile, bracket=bracket, felt_color=felt_color,
+                      timber=timber, timber_painting=timber_painting)
+    if any(not isinstance(value, str) or not value.strip()
+           for value in (product_model, table_size, *selections.values())):
+        raise ValueError("Pricing requires supplied canonical catalog selections.")
+    base = lookup_base_product(product_model, table_size)["record"]
+    if base is None:
+        raise LookupError("Confirmed base product is not resolvable.")
+    if base["product_model"] != product_model or base["table_size"] != table_size:
+        raise ValueError("Confirmed base product is not canonical.")
+    adjustments = {}
+    for field, category in CUSTOMIZATION_CATEGORIES.items():
+        record = lookup_product_option(category, selections[field])["record"]
+        if record is None:
+            raise LookupError(f"Confirmed catalog selection is not resolvable: {field}")
+        if record["title"] != selections[field]:
+            raise ValueError(f"Confirmed catalog selection is not canonical: {field}")
+        adjustments[field] = Decimal(record["price"])
+    base_price = Decimal(base["price"])
+    if any(value < 0 for value in (base_price, *adjustments.values())):
+        raise ValueError("Product prices must be non-negative.")
+    customisation_price = sum(adjustments.values(), Decimal("0"))
+    return {"product_sku": base["sku"], "base_price": base_price,
+            "option_adjustments": adjustments, "customisation_price": customisation_price,
+            "unit_price": base_price + customisation_price}

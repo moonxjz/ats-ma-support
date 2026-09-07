@@ -1,0 +1,906 @@
+{
+  "postcode_zones": [
+    {
+      "postcode": "1000",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1001",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1002",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1003",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1004",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1005",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1006",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1007",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1008",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1009",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1010",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1011",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1012",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1013",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1014",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1015",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1016",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1017",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1018",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "1019",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
+      "postcode": "3000",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3001",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3002",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3003",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3004",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3005",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3006",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3007",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3008",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3009",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3010",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3011",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3012",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3013",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3014",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3015",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3016",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3017",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3018",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "3019",
+      "shipping_zone": "Melbourne Metro"
+    },
+    {
+      "postcode": "4000",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4001",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4002",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4003",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4004",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4005",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4006",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4007",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4008",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4009",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4010",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4011",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4012",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4013",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4014",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4015",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4016",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4017",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4018",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4019",
+      "shipping_zone": "Brisbane Metro"
+    },
+    {
+      "postcode": "4210",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4211",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4212",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4213",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4214",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4215",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4216",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4217",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4218",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4219",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4220",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4221",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4222",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4223",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4224",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4225",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4226",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4227",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4228",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4229",
+      "shipping_zone": "Gold Coast"
+    },
+    {
+      "postcode": "4550",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4551",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4552",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4553",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4554",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4555",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4556",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4557",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4558",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4559",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4560",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4561",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4562",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4563",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4564",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4565",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4566",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4567",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4568",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "4569",
+      "shipping_zone": "Sunshine Coast"
+    },
+    {
+      "postcode": "2282",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2283",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2284",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2285",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2286",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2287",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2288",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2289",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2290",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2291",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2292",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2293",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2294",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2295",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2296",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2297",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2298",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2299",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2300",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "2301",
+      "shipping_zone": "Newcastle"
+    },
+    {
+      "postcode": "6000",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6001",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6002",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6003",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6004",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6005",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6006",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6007",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6008",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6009",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6010",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6011",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6012",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6013",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6014",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6015",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6016",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6017",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6018",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "6019",
+      "shipping_zone": "Perth Metro"
+    },
+    {
+      "postcode": "5000",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5001",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5002",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5003",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5004",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5005",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5006",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5007",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5008",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5009",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5010",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5011",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5012",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5013",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5014",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5015",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5016",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5017",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5018",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "5019",
+      "shipping_zone": "Adelaide Metro"
+    },
+    {
+      "postcode": "2900",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2901",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2902",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2903",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2904",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2905",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2906",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2907",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2908",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2909",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2910",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2911",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2912",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2913",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2914",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2915",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2916",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2917",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2918",
+      "shipping_zone": "Canberra"
+    },
+    {
+      "postcode": "2919",
+      "shipping_zone": "Canberra"
+    }
+  ],
+  "rates": [
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Melbourne Metro",
+      "per_table_shipping_rate": "450"
+    },
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Sydney Metro",
+      "per_table_shipping_rate": "1202"
+    },
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Canberra",
+      "per_table_shipping_rate": "1202"
+    },
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Newcastle",
+      "per_table_shipping_rate": "1265"
+    },
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Adelaide Metro",
+      "per_table_shipping_rate": "1265"
+    },
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Brisbane Metro",
+      "per_table_shipping_rate": "1518"
+    },
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Gold Coast",
+      "per_table_shipping_rate": "1518"
+    },
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Sunshine Coast",
+      "per_table_shipping_rate": "1645"
+    },
+    {
+      "table_size_ft": 6,
+      "shipping_zone": "Perth Metro",
+      "per_table_shipping_rate": "2800"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Melbourne Metro",
+      "per_table_shipping_rate": "450"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Sydney Metro",
+      "per_table_shipping_rate": "1202"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Canberra",
+      "per_table_shipping_rate": "1202"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Newcastle",
+      "per_table_shipping_rate": "1265"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Adelaide Metro",
+      "per_table_shipping_rate": "1265"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Brisbane Metro",
+      "per_table_shipping_rate": "1518"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Gold Coast",
+      "per_table_shipping_rate": "1518"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Sunshine Coast",
+      "per_table_shipping_rate": "1645"
+    },
+    {
+      "table_size_ft": 7,
+      "shipping_zone": "Perth Metro",
+      "per_table_shipping_rate": "2800"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Melbourne Metro",
+      "per_table_shipping_rate": "530"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Canberra",
+      "per_table_shipping_rate": "1328"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Adelaide Metro",
+      "per_table_shipping_rate": "1380"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Sydney Metro",
+      "per_table_shipping_rate": "1518"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Newcastle",
+      "per_table_shipping_rate": "1518"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Brisbane Metro",
+      "per_table_shipping_rate": "1645"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Gold Coast",
+      "per_table_shipping_rate": "1645"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Sunshine Coast",
+      "per_table_shipping_rate": "1771"
+    },
+    {
+      "table_size_ft": 8,
+      "shipping_zone": "Perth Metro",
+      "per_table_shipping_rate": "2900"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Melbourne Metro",
+      "per_table_shipping_rate": "550"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Sydney Metro",
+      "per_table_shipping_rate": "1700"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Canberra",
+      "per_table_shipping_rate": "1700"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Newcastle",
+      "per_table_shipping_rate": "1800"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Adelaide Metro",
+      "per_table_shipping_rate": "1800"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Brisbane Metro",
+      "per_table_shipping_rate": "1900"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Gold Coast",
+      "per_table_shipping_rate": "1900"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Sunshine Coast",
+      "per_table_shipping_rate": "2000"
+    },
+    {
+      "table_size_ft": 9,
+      "shipping_zone": "Perth Metro",
+      "per_table_shipping_rate": "3800"
+    }
+  ]
+}
