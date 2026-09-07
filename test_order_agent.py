@@ -7,6 +7,7 @@ from unittest.mock import Mock, call, patch
 from pydantic import ValidationError
 
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
+from order_creation_confirmation import ConfirmationInterpretation
 from order_agent import process_order_creation_message
 from order_creation_controller import execute_order_creation_workflow
 from order_creation_extraction import ConversationMessage
@@ -23,6 +24,10 @@ class OrderAgentTests(unittest.TestCase):
         self.extract = self.extraction_patch.start()
         self.addCleanup(self.extraction_patch.stop)
         self.extract.return_value = ExtractedOrderInformation()
+        self.confirmation_patch = patch("order_agent.interpret_confirmation_response")
+        self.interpret = self.confirmation_patch.start()
+        self.addCleanup(self.confirmation_patch.stop)
+        self.interpret.return_value = ConfirmationInterpretation(intent="AMBIGUOUS")
 
     def test_exact_chain_arguments_and_return_identity(self):
         extracted = ExtractedOrderInformation(customer_name="Alex")
@@ -225,6 +230,101 @@ class OrderAgentTests(unittest.TestCase):
         self.extract.assert_called_once()
         execute.assert_called_once()
         self.assertEqual(self.state.model_dump(), before)
+
+
+    def test_pending_turn_interprets_updated_state_in_correct_order(self):
+        state = complete_customer_state()
+        execute_order_creation_workflow(state)
+        before, history_before = state.model_dump(), deepcopy(self.history)
+        order = []
+        from order_creation_updates import apply_extracted_order_information
+        from order_creation_controller import apply_order_creation_reentry
+        def extract(*args):
+            order.append("extract")
+            return ExtractedOrderInformation()
+        def merge(*args):
+            order.append("merge")
+            return apply_extracted_order_information(*args)
+        def reentry(*args):
+            order.append("reentry")
+            apply_order_creation_reentry(*args)
+        working_states = []
+        def interpret(message, history, current):
+            order.append("interpret")
+            self.assertEqual(message, "No")
+            self.assertIs(history, self.history)
+            self.assertIsNot(current, state)
+            working_states.append(current)
+            return ConfirmationInterpretation(intent="DECLINED")
+        results = []
+        def execute(current, **kwargs):
+            order.append("execute")
+            self.assertIs(current, working_states[0])
+            self.assertEqual(kwargs["confirmation_snapshot"], current.order_snapshot)
+            self.assertIsNot(kwargs["confirmation_snapshot"], current.order_snapshot)
+            result = execute_order_creation_workflow(current, **kwargs)
+            results.append(result)
+            return result
+        self.extract.side_effect = extract
+        self.interpret.side_effect = interpret
+        with patch("order_agent.apply_extracted_order_information", side_effect=merge), \
+             patch("order_agent.apply_order_creation_reentry", side_effect=reentry), \
+             patch("order_agent.execute_order_creation_workflow", side_effect=execute):
+            updated, result = process_order_creation_message("No", self.history, state)
+        self.assertEqual(order, ["extract", "merge", "reentry", "interpret", "execute"])
+        self.assertIs(updated, working_states[0])
+        self.assertIs(result, results[0])
+        self.assertEqual(result.data["confirmation_intent"], "DECLINED")
+        self.assertEqual(state.model_dump(), before)
+        self.assertEqual(self.history, history_before)
+
+    def test_first_arrival_and_effective_corrections_skip_interpretation(self):
+        state, _ = process_order_creation_message("Initial order", [], complete_customer_state())
+        self.interpret.assert_not_called()
+        for values in ({"felt_color":"Green"}, {"table_size":"7ft"},
+                       {"room_size":"6m x 5m"}, {"phone":"0400123456"}):
+            with self.subTest(values=values):
+                self.extract.return_value = ExtractedOrderInformation(**values)
+                process_order_creation_message("No, change it", [], state)
+                self.interpret.assert_not_called()
+
+    def test_same_value_confirmation_reaches_pricing_and_preserves_inputs(self):
+        state = complete_customer_state()
+        execute_order_creation_workflow(state)
+        before, history_before = state.model_dump(), deepcopy(self.history)
+        self.extract.return_value = ExtractedOrderInformation(table_size="8ft")
+        self.interpret.return_value = ConfirmationInterpretation(intent="CONFIRMED")
+        with patch("order_agent.execute_order_creation_workflow", wraps=execute_order_creation_workflow) as execute:
+            with self.assertRaisesRegex(NotImplementedError, "PRICING"):
+                process_order_creation_message("Yes, 8ft is correct", self.history, state)
+        self.interpret.assert_called_once()
+        working = self.interpret.call_args.args[2]
+        self.assertIs(working, execute.call_args.args[0])
+        self.assertTrue(working.configuration_confirmed)
+        self.assertEqual(working.current_stage, OrderCreationStage.PRICING)
+        self.assertIsNone(working.failure_reason)
+        self.assertEqual(state.model_dump(), before)
+        self.assertEqual(self.history, history_before)
+
+    def test_interpreter_and_reentry_errors_propagate_before_execution(self):
+        state = complete_customer_state()
+        execute_order_creation_workflow(state)
+        error = ConnectionError("Interpreter unavailable")
+        self.interpret.side_effect = error
+        with patch("order_agent.execute_order_creation_workflow") as execute:
+            with self.assertRaises(ConnectionError) as caught:
+                process_order_creation_message("Yes", [], state)
+            self.assertIs(caught.exception, error)
+            execute.assert_not_called()
+        self.interpret.reset_mock()
+        reentry_error = RuntimeError("Reentry failed")
+        with patch("order_agent.apply_order_creation_reentry", side_effect=reentry_error), \
+             patch("order_agent.execute_order_creation_workflow") as execute:
+            with self.assertRaises(RuntimeError) as caught:
+                process_order_creation_message("Yes", [], state)
+            self.assertIs(caught.exception, reentry_error)
+            self.interpret.assert_not_called()
+            execute.assert_not_called()
 
 
 if __name__ == "__main__":

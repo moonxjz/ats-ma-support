@@ -1,9 +1,12 @@
 """Order Agent internal orchestration for already-routed ORDER_CREATE_WF turns."""
 
+from copy import deepcopy
+
+from order_creation_confirmation import interpret_confirmation_response
 from business_result import BusinessResult
 from order_creation_controller import apply_order_creation_reentry, execute_order_creation_workflow
 from order_creation_extraction import ConversationMessage, extract_order_information
-from order_creation_state import OrderCreationState
+from order_creation_state import OrderCreationStage, OrderCreationState, OrderWorkflowStatus
 from order_creation_updates import apply_extracted_order_information
 
 
@@ -21,7 +24,9 @@ def process_order_creation_message(
 
     Technical exceptions propagate unchanged. The controller-owned re-entry
     policy prepares changed requirements before stage execution. Normal unconfirmed
-    configurations return a confirmation request; acceptance remains unimplemented.
+    configurations return a confirmation request. Accepted confirmation advances
+    to unimplemented PRICING and raises before this function returns its working
+    copy; caller-owned Wt remains unchanged at that temporary boundary.
     """
     extracted = extract_order_information(
         current_message,
@@ -33,5 +38,27 @@ def process_order_creation_message(
         extracted,
     )
     apply_order_creation_reentry(state, updated_state)
-    result = execute_order_creation_workflow(updated_state)
+    # Only a previously pending turn may interpret a response. Re-entry has
+    # already moved effective changes away from confirmation. Use current Wt.
+    if (
+        state.current_stage == OrderCreationStage.CONFIGURATION_CONFIRMATION
+        and state.status == OrderWorkflowStatus.AWAITING_USER_INPUT
+        and not state.configuration_confirmed
+        and "configuration_confirmed" in state.pending_confirmations
+        and state.order_snapshot
+        and updated_state.current_stage == OrderCreationStage.CONFIGURATION_CONFIRMATION
+        and updated_state.status == OrderWorkflowStatus.AWAITING_USER_INPUT
+        and not updated_state.configuration_confirmed
+        and "configuration_confirmed" in updated_state.pending_confirmations
+        and updated_state.order_snapshot
+    ):
+        snapshot = deepcopy(updated_state.order_snapshot)
+        confirmation = interpret_confirmation_response(
+            current_message, conversation_history, updated_state,
+        )
+        result = execute_order_creation_workflow(
+            updated_state, confirmation=confirmation, confirmation_snapshot=snapshot,
+        )
+    else:
+        result = execute_order_creation_workflow(updated_state)
     return updated_state, result

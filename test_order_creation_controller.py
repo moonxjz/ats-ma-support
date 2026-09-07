@@ -530,5 +530,88 @@ class ConfirmationAndReentryTests(unittest.TestCase):
                     self.assertEqual(updated.order_snapshot, {})
 
 
+class ConfirmationAcceptanceTests(unittest.TestCase):
+    def setUp(self):
+        from order_creation_confirmation import ConfirmationInterpretation
+        self.confirmed = ConfirmationInterpretation(intent="CONFIRMED")
+        self.state = complete_customer_state()
+        execute_order_creation_workflow(self.state)
+        self.snapshot = self.state.order_snapshot.copy()
+
+    def test_accept_exact_snapshot_then_pricing_boundary(self):
+        snapshot_object = self.state.order_snapshot
+        with patch("order_creation_controller.current_utc_time", return_value="fixed"):
+            self.assertIsNone(handle_configuration_confirmation(
+                self.state, confirmation=self.confirmed, confirmation_snapshot=self.snapshot))
+        self.assertTrue(self.state.configuration_confirmed)
+        self.assertNotIn("configuration_confirmed", self.state.pending_confirmations)
+        self.assertIn("final_order_confirmed", self.state.pending_confirmations)
+        self.assertEqual(self.state.current_stage, OrderCreationStage.PRICING)
+        self.assertEqual(self.state.status, OrderWorkflowStatus.ACTIVE)
+        self.assertEqual(self.state.updated_at, "fixed")
+        self.assertIs(self.state.order_snapshot, snapshot_object)
+        self.assertEqual(self.state.order_snapshot, self.snapshot)
+        with self.assertRaisesRegex(NotImplementedError, "PRICING"):
+            execute_order_creation_workflow(self.state)
+        self.assertIsNone(self.state.failure_reason)
+
+    def test_executor_continues_to_pricing_without_business_result(self):
+        with self.assertRaisesRegex(NotImplementedError, "PRICING"):
+            execute_order_creation_workflow(self.state, confirmation=self.confirmed,
+                                            confirmation_snapshot=self.snapshot)
+        self.assertTrue(self.state.configuration_confirmed)
+        self.assertEqual(self.state.current_stage, OrderCreationStage.PRICING)
+        self.assertEqual(self.state.status, OrderWorkflowStatus.ACTIVE)
+
+    def test_invalid_acceptance_rejected_before_mutation(self):
+        cases = [("order_snapshot", {}), ("order_snapshot", {"table_size":"8ft"}),
+                 ("phone", None), ("table_size", "9ft"),
+                 ("room_size_validation_result", None), ("room_size_validation_result", "UNSUITABLE"),
+                 ("pending_confirmations", []), ("configuration_confirmed", True),
+                 ("status", OrderWorkflowStatus.ACTIVE), ("status", OrderWorkflowStatus.COMPLETED),
+                 ("current_stage", OrderCreationStage.COLLECT_REQUIREMENTS)]
+        for field, value in cases:
+            with self.subTest(field=field):
+                state = self.state.model_copy(deep=True)
+                setattr(state, field, value)
+                before = state.model_dump()
+                with self.assertRaises(ValueError):
+                    execute_order_creation_workflow(state, confirmation=self.confirmed,
+                                                    confirmation_snapshot=self.snapshot)
+                self.assertEqual(state.model_dump(), before)
+        for snapshot in (None, {}, {**self.snapshot, "felt_color":"Green"}):
+            before = self.state.model_dump()
+            with self.assertRaises(ValueError):
+                handle_configuration_confirmation(self.state, confirmation=self.confirmed,
+                                                   confirmation_snapshot=snapshot)
+            self.assertEqual(self.state.model_dump(), before)
+
+    def test_waiting_interpretations_preserve_snapshot_and_add_context(self):
+        from order_creation_confirmation import ConfirmationInterpretation
+        for intent in ("DECLINED", "AMBIGUOUS", "CHANGE_REQUESTED"):
+            with self.subTest(intent=intent):
+                state = self.state.model_copy(deep=True)
+                snapshot_object = state.order_snapshot
+                result = execute_order_creation_workflow(state,
+                    confirmation=ConfirmationInterpretation(intent=intent),
+                    confirmation_snapshot=self.snapshot)
+                self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
+                self.assertEqual(result.data["confirmation_intent"], intent)
+                self.assertEqual(result.required_input, ["configuration_confirmed"])
+                self.assertFalse(state.configuration_confirmed)
+                self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
+                self.assertIs(state.order_snapshot, snapshot_object)
+                self.assertIsNot(result.data["configuration_snapshot"], snapshot_object)
+                self.assertEqual(state.pending_confirmations.count("configuration_confirmed"), 1)
+
+    def test_snapshot_without_interpretation_rejected_and_no_args_preserved(self):
+        before = self.state.model_dump()
+        with self.assertRaises(ValueError):
+            execute_order_creation_workflow(self.state, confirmation_snapshot=self.snapshot)
+        self.assertEqual(self.state.model_dump(), before)
+        result = execute_order_creation_workflow(self.state)
+        self.assertNotIn("confirmation_intent", result.data)
+
+
 if __name__ == "__main__":
     unittest.main()

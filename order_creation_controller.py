@@ -1,5 +1,7 @@
 """Deterministic stage execution and bounded re-entry for ORDER_CREATE_WF."""
 
+from order_creation_confirmation import ConfirmationIntent, ConfirmationInterpretation
+
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
 from order_creation_rules import build_configuration_snapshot, validate_room_size
 from order_creation_updates import ExtractedOrderInformation
@@ -12,7 +14,12 @@ from order_creation_state import (
 from workflow_state import current_utc_time
 
 
-def execute_order_creation_workflow(state: OrderCreationState) -> BusinessResult:
+def execute_order_creation_workflow(
+    state: OrderCreationState,
+    *,
+    confirmation: ConfirmationInterpretation | None = None,
+    confirmation_snapshot: dict | None = None,
+) -> BusinessResult:
     """Run implemented stages until a handler produces a business result.
 
     Unimplemented stages raise NotImplementedError without undoing progress or
@@ -23,6 +30,12 @@ def execute_order_creation_workflow(state: OrderCreationState) -> BusinessResult
         OrderWorkflowStatus.AWAITING_USER_INPUT,
     }:
         raise ValueError("Execution requires status=ACTIVE or AWAITING_USER_INPUT.")
+
+    if confirmation is not None or confirmation_snapshot is not None:
+        if state.current_stage != OrderCreationStage.CONFIGURATION_CONFIRMATION:
+            raise ValueError("Confirmation arguments require CONFIGURATION_CONFIRMATION entry.")
+        if confirmation is None:
+            raise ValueError("confirmation_snapshot requires a confirmation interpretation.")
 
     visited_stages = set()
     while True:
@@ -46,7 +59,15 @@ def execute_order_creation_workflow(state: OrderCreationState) -> BusinessResult
         elif stage == OrderCreationStage.VALIDATE_CONFIGURATION:
             result = handle_validate_configuration(state)
         else:
-            result = handle_configuration_confirmation(state)
+            if confirmation is None and confirmation_snapshot is None:
+                result = handle_configuration_confirmation(state)
+            else:
+                result = handle_configuration_confirmation(
+                    state, confirmation=confirmation,
+                    confirmation_snapshot=confirmation_snapshot,
+                )
+                confirmation = None
+                confirmation_snapshot = None
 
         if isinstance(result, BusinessResult):
             return result
@@ -199,11 +220,16 @@ def apply_order_creation_reentry(
     updated_state.updated_at = current_utc_time()
 
 
-def handle_configuration_confirmation(state: OrderCreationState) -> BusinessResult:
-    """Request confirmation only; callers must apply re-entry after data changes.
+def handle_configuration_confirmation(
+    state: OrderCreationState,
+    *,
+    confirmation: ConfirmationInterpretation | None = None,
+    confirmation_snapshot: dict | None = None,
+) -> BusinessResult | None:
+    """Wait or accept the exact pending snapshot; no language interpretation.
 
-    The stored suitability is a prerequisite established by validation, not
-    recalculated here. Confirmation acceptance remains explicitly unimplemented.
+    Callers apply re-entry after data changes. Stored suitability is established
+    by validation. Acceptance returns None to continue to the pricing boundary.
     """
     if state.current_stage != OrderCreationStage.CONFIGURATION_CONFIRMATION:
         raise ValueError("Handler requires current_stage=CONFIGURATION_CONFIRMATION.")
@@ -211,11 +237,36 @@ def handle_configuration_confirmation(state: OrderCreationState) -> BusinessResu
         OrderWorkflowStatus.ACTIVE, OrderWorkflowStatus.AWAITING_USER_INPUT,
     }:
         raise ValueError("Handler requires status=ACTIVE or AWAITING_USER_INPUT.")
+    if confirmation is None and confirmation_snapshot is not None:
+        raise ValueError("confirmation_snapshot requires a confirmation interpretation.")
+    if confirmation is not None:
+        confirmation = ConfirmationInterpretation.model_validate(confirmation)
+        if state.configuration_confirmed:
+            raise ValueError("Configuration is already confirmed.")
+        if state.status != OrderWorkflowStatus.AWAITING_USER_INPUT:
+            raise ValueError("Confirmation response requires AWAITING_USER_INPUT.")
+        if "configuration_confirmed" not in state.pending_confirmations:
+            raise ValueError("Configuration confirmation is not pending.")
+        if (not state.order_snapshot
+                or confirmation_snapshot != state.order_snapshot
+                or state.order_snapshot != build_configuration_snapshot(state)):
+            raise ValueError("Confirmation snapshot is missing or does not match current configuration.")
     if state.configuration_confirmed:
         raise NotImplementedError("Confirmed configuration processing is not implemented.")
     if determine_missing_fields(state) or state.room_size_validation_result != "SUITABLE":
         raise ValueError("Confirmation requires complete customer information and suitable room validation.")
-    state.order_snapshot = build_configuration_snapshot(state)
+    if confirmation is not None and confirmation.intent == ConfirmationIntent.CONFIRMED:
+        state.configuration_confirmed = True
+        state.pending_confirmations = [
+            field for field in state.pending_confirmations if field != "configuration_confirmed"
+        ]
+        state.status = OrderWorkflowStatus.ACTIVE
+        state.current_stage = OrderCreationStage.PRICING
+        state.pending_field = None
+        state.updated_at = current_utc_time()
+        return None
+    if confirmation is None:
+        state.order_snapshot = build_configuration_snapshot(state)
     state.status = OrderWorkflowStatus.AWAITING_USER_INPUT
     state.configuration_confirmed = False
     state.pending_field = None
@@ -223,6 +274,9 @@ def handle_configuration_confirmation(state: OrderCreationState) -> BusinessResu
         field for field in state.pending_confirmations if field != "configuration_confirmed"
     ] + ["configuration_confirmed"]
     state.updated_at = current_utc_time()
+    data = {"configuration_snapshot": state.order_snapshot.copy()}
+    if confirmation is not None:
+        data["confirmation_intent"] = confirmation.intent.value
     return BusinessResult(
         workflow_id=state.workflow_id,
         source_agent="ORDER_AGENT",
@@ -230,7 +284,7 @@ def handle_configuration_confirmation(state: OrderCreationState) -> BusinessResu
         current_stage=OrderCreationStage.CONFIGURATION_CONFIRMATION.value,
         result_status=BusinessResultStatus.NEEDS_USER_INPUT,
         reason=BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED,
-        data={"configuration_snapshot": state.order_snapshot.copy()},
+        data=data,
         required_input=["configuration_confirmed"],
         error=None,
     )
