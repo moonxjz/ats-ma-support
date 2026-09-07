@@ -17,7 +17,18 @@ from order_creation_state import (
     OrderWorkflowStatus,
     REQUIRED_CUSTOMER_FIELDS,
 )
-from test_order_creation_state import complete_customer_state
+from test_order_creation_state import complete_customer_state as schema_complete_state
+
+
+def complete_customer_state():
+    """Catalog-valid workflow fixture; Stage 1 completeness fixture stays unchanged."""
+    state = schema_complete_state()
+    state.product_model = "Odyssey"
+    state.timber = "Tassie Oak"
+    state.felt_color = "Grey"
+    state.bracket = "Standard rubber"
+    state.top_profile = "Waterfall"
+    return state
 
 
 class CollectRequirementsTests(unittest.TestCase):
@@ -177,11 +188,13 @@ class ValidateConfigurationTests(unittest.TestCase):
             result = handle_validate_configuration(state)
             self.assertEqual(result.required_input, [field])
             self.assertEqual(state.pending_field, field)
-            self.assertEqual(result.reason, BusinessResultReason.MISSING_REQUIRED_INFORMATION)
+            self.assertEqual(result.reason, BusinessResultReason.UNSUPPORTED_CONFIGURATION_VALUE
+                             if field == "table_size" else BusinessResultReason.MISSING_REQUIRED_INFORMATION)
             self.assertEqual(result.result_status, BusinessResultStatus.NEEDS_USER_INPUT)
             self.assertEqual(result.current_stage, "VALIDATE_CONFIGURATION")
             self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
-            self.assertIsNone(state.room_size_validation_result)
+            if field == "room_size":
+                self.assertIsNone(state.room_size_validation_result)
             self.assertEqual(state.missing_customer_fields, [])
             self.assertEqual(state.room_size, "large")
             self.assertEqual(state.table_size, "6ft" if field == "table_size" else "8ft")
@@ -274,6 +287,96 @@ class ValidateConfigurationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     handle_validate_configuration(state)
                 self.assertEqual(state.model_dump_json(), before)
+
+
+class CatalogValidationTests(unittest.TestCase):
+    def test_unsupported_values_stop_before_room_and_confirmation(self):
+        cases = [("felt_color", "Green", "Felt"),
+                 ("product_model", "Unknown", "Table Design Model"),
+                 ("table_size", "6ft", "Table Design Model"),
+                 ("top_profile", "Unknown", "Top Rail Profile"),
+                 ("bracket", "Unknown", "Bracket"),
+                 ("timber", "Tasmanian Oak", "Timber"),
+                 ("timber_painting", "Unknown", "Timber Paint")]
+        for field, value, category in cases:
+            with self.subTest(field=field):
+                state = complete_customer_state()
+                setattr(state, field, value)
+                state.last_question = "Preserve wording"
+                state.failure_reason = "Preserve diagnostic"
+                state.conflicting_fields = {"other": ["value"]}
+                state.pending_system_fields = ["product_sku"]
+                confirmations = state.pending_confirmations.copy()
+                with patch("order_creation_controller.validate_room_size") as room, \
+                     patch("order_creation_controller.handle_configuration_confirmation") as confirm:
+                    result = execute_order_creation_workflow(state)
+                room.assert_not_called()
+                confirm.assert_not_called()
+                self.assertEqual(getattr(state, field), value)
+                self.assertEqual(state.missing_customer_fields, [])
+                self.assertEqual(state.current_stage, OrderCreationStage.VALIDATE_CONFIGURATION)
+                self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
+                self.assertEqual(state.pending_field, field)
+                self.assertEqual(result.required_input, [field])
+                self.assertEqual(result.reason, BusinessResultReason.UNSUPPORTED_CONFIGURATION_VALUE)
+                self.assertEqual(result.result_status, BusinessResultStatus.NEEDS_USER_INPUT)
+                self.assertEqual(result.data["field"], field)
+                self.assertEqual(result.data["category"], category)
+                self.assertEqual(result.data["supplied_value"], value)
+                self.assertTrue(result.data["allowed_values"])
+                if field == "felt_color":
+                    self.assertEqual(result.data["allowed_values"], ["Olive", "Blue", "Burgundy", "Black", "Red", "Purple", "Grey"])
+                self.assertEqual(state.order_snapshot, {})
+                self.assertEqual(state.last_question, "Preserve wording")
+                self.assertEqual(state.failure_reason, "Preserve diagnostic")
+                self.assertEqual(state.conflicting_fields, {"other": ["value"]})
+                self.assertEqual(state.pending_system_fields, ["product_sku"])
+                self.assertEqual(state.pending_confirmations, confirmations)
+
+    def test_canonicalization_precedes_room_and_snapshot(self):
+        state = complete_customer_state()
+        for field in ("product_model", "table_size", "top_profile", "bracket",
+                      "felt_color", "timber", "timber_painting"):
+            setattr(state, field, " " + getattr(state, field).upper() + " ")
+        result = execute_order_creation_workflow(state)
+        expected = complete_customer_state()
+        for field in ("product_model", "table_size", "top_profile", "bracket",
+                      "felt_color", "timber", "timber_painting"):
+            self.assertEqual(getattr(state, field), getattr(expected, field))
+            self.assertEqual(result.data["configuration_snapshot"][field], getattr(expected, field))
+        self.assertEqual(state.room_size_validation_result, "SUITABLE")
+        self.assertIsNone(state.product_sku)
+        self.assertIsNone(state.unit_price)
+
+    def test_corrections_are_one_at_a_time_and_canonicalization_waits(self):
+        state = complete_customer_state()
+        state.product_model = " odyssey "
+        state.top_profile = "Unknown"
+        state.felt_color = "Green"
+        result = execute_order_creation_workflow(state)
+        self.assertEqual(result.required_input, ["top_profile"])
+        self.assertEqual(state.product_model, " odyssey ")
+        state.top_profile = "Waterfall"
+        result = execute_order_creation_workflow(state)
+        self.assertEqual(result.required_input, ["felt_color"])
+        state.felt_color = " blue "
+        result = execute_order_creation_workflow(state)
+        self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
+        self.assertEqual(state.order_snapshot["felt_color"], "Blue")
+
+    def test_completeness_precedes_catalog_and_technical_errors_propagate(self):
+        state = complete_customer_state()
+        state.phone = None
+        with patch("order_creation_controller.lookup_base_product") as lookup:
+            result = execute_order_creation_workflow(state)
+        lookup.assert_not_called()
+        self.assertEqual(result.current_stage, "COLLECT_REQUIREMENTS")
+        state.phone = "0400000000"
+        with patch("order_creation_controller.lookup_base_product", side_effect=ValueError("Bad catalog")):
+            with self.assertRaisesRegex(ValueError, "Bad catalog"):
+                execute_order_creation_workflow(state)
+        self.assertIsNone(state.failure_reason)
+        self.assertNotEqual(state.status, OrderWorkflowStatus.FAILED)
 
 
 class WorkflowExecutionTests(unittest.TestCase):
@@ -500,11 +603,11 @@ class ConfirmationAndReentryTests(unittest.TestCase):
 
     def test_reentry_routes_through_actual_handlers(self):
         from order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
-        cases = [({"felt_color": "Green"}, "CONFIGURATION_CONFIRMATION_REQUIRED", True),
+        cases = [({"felt_color": "Green"}, "UNSUPPORTED_CONFIGURATION_VALUE", False),
                  ({"table_size": "9ft"}, "ROOM_SIZE_UNSUITABLE", False),
                  ({"room_size": "6m x 5m"}, "CONFIGURATION_CONFIRMATION_REQUIRED", True),
                  ({"room_size": "large"}, "MISSING_REQUIRED_INFORMATION", False),
-                 ({"table_size": "11ft"}, "MISSING_REQUIRED_INFORMATION", False),
+                 ({"table_size": "11ft"}, "UNSUPPORTED_CONFIGURATION_VALUE", False),
                  ({"phone": "0400123456"}, "CONFIGURATION_CONFIRMATION_REQUIRED", True)]
         for values, reason, confirms in cases:
             with self.subTest(values=values):

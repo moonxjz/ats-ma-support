@@ -13,7 +13,18 @@ from order_creation_controller import execute_order_creation_workflow
 from order_creation_extraction import ConversationMessage
 from order_creation_state import OrderCreationStage, OrderCreationState, OrderWorkflowStatus
 from order_creation_updates import ExtractedOrderInformation
-from test_order_creation_state import complete_customer_state
+from test_order_creation_state import complete_customer_state as schema_complete_state
+
+
+def complete_customer_state():
+    """Catalog-valid workflow fixture; Stage 1 completeness fixture stays unchanged."""
+    state = schema_complete_state()
+    state.product_model = "Odyssey"
+    state.timber = "Tassie Oak"
+    state.felt_color = "Grey"
+    state.bracket = "Standard rubber"
+    state.top_profile = "Waterfall"
+    return state
 
 
 class OrderAgentTests(unittest.TestCase):
@@ -156,7 +167,7 @@ class OrderAgentTests(unittest.TestCase):
         cases = [
             ({"room_size": "4m x 3m"}, BusinessResultReason.ROOM_SIZE_UNSUITABLE, "table_size"),
             ({"room_size": "large"}, BusinessResultReason.MISSING_REQUIRED_INFORMATION, "room_size"),
-            ({"table_size": "11ft"}, BusinessResultReason.MISSING_REQUIRED_INFORMATION, "table_size"),
+            ({"table_size": "11ft"}, BusinessResultReason.UNSUPPORTED_CONFIGURATION_VALUE, "table_size"),
         ]
         for values, reason, required in cases:
             with self.subTest(values=values):
@@ -217,8 +228,9 @@ class OrderAgentTests(unittest.TestCase):
             updated, result = process_order_creation_message("Green instead", self.history, state)
         collect.assert_called_once()
         validate.assert_called_once()
-        self.assertEqual(updated.order_snapshot["felt_color"], "Green")
-        self.assertEqual(result.reason, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)
+        self.assertEqual(updated.order_snapshot, {})
+        self.assertEqual(updated.felt_color, "Green")
+        self.assertEqual(result.reason, BusinessResultReason.UNSUPPORTED_CONFIGURATION_VALUE)
         self.assertEqual(state.model_dump(), before)
 
     def test_terminal_policy_remains_in_controller_after_extraction(self):

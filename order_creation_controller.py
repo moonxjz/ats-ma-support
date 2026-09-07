@@ -1,6 +1,9 @@
 """Deterministic stage execution and bounded re-entry for ORDER_CREATE_WF."""
 
 from order_creation_confirmation import ConfirmationIntent, ConfirmationInterpretation
+from order_creation_catalog import (
+    CUSTOMIZATION_CATEGORIES, lookup_base_product, lookup_product_option,
+)
 
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
 from order_creation_rules import build_configuration_snapshot, validate_room_size
@@ -121,7 +124,7 @@ def handle_collect_requirements(state: OrderCreationState) -> BusinessResult | N
 
 
 def handle_validate_configuration(state: OrderCreationState) -> BusinessResult | None:
-    """Evaluate current room/table values; leave response wording to its owner."""
+    """Validate catalog selections, canonicalize, then evaluate room suitability."""
     if state.current_stage != OrderCreationStage.VALIDATE_CONFIGURATION:
         raise ValueError("Handler requires current_stage=VALIDATE_CONFIGURATION.")
     if state.status not in {
@@ -138,6 +141,36 @@ def handle_validate_configuration(state: OrderCreationState) -> BusinessResult |
             state.pending_system_fields.append(validation_field)
         state.current_stage = OrderCreationStage.COLLECT_REQUIREMENTS
         return handle_collect_requirements(state)
+
+    base = lookup_base_product(state.product_model, state.table_size)
+    correction = None
+    canonical = {}
+    if base["record"] is None:
+        correction = (base["field"], "Table Design Model", base["allowed_values"])
+    else:
+        canonical = {key: base["record"][key] for key in ("product_model", "table_size")}
+        for field, category in CUSTOMIZATION_CATEGORIES.items():
+            option = lookup_product_option(category, getattr(state, field))
+            if option["record"] is None:
+                correction = (field, category, option["allowed_values"])
+                break
+            canonical[field] = option["record"]["title"]
+    if correction is not None:
+        field, category, allowed = correction
+        state.pending_field = field
+        state.status = OrderWorkflowStatus.AWAITING_USER_INPUT
+        state.updated_at = current_utc_time()
+        return BusinessResult(
+            workflow_id=state.workflow_id, source_agent="ORDER_AGENT",
+            action="CREATE_ORDER", current_stage=state.current_stage.value,
+            result_status=BusinessResultStatus.NEEDS_USER_INPUT,
+            reason=BusinessResultReason.UNSUPPORTED_CONFIGURATION_VALUE,
+            required_input=[field],
+            data={"field": field, "category": category,
+                  "supplied_value": getattr(state, field), "allowed_values": allowed.copy()},
+        )
+    for field, value in canonical.items():
+        setattr(state, field, value)
 
     validation = validate_room_size(state.room_size, state.table_size)
     state.room_size_validation_result = validation["result"]

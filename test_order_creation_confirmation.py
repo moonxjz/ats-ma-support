@@ -15,6 +15,12 @@ from test_order_creation_state import complete_customer_state
 
 def waiting_state():
     state = complete_customer_state()
+    # Canonical catalog selections; exercise the real validation path.
+    state.product_model = "Odyssey"
+    state.timber = "Tassie Oak"
+    state.felt_color = "Grey"
+    state.bracket = "Standard rubber"
+    state.top_profile = "Waterfall"
     execute_order_creation_workflow(state)
     return state
 

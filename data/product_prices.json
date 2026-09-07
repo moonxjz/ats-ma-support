@@ -1,0 +1,620 @@
+{
+  "records": [
+    {
+      "category": "Top Rail Profile",
+      "title": "Bull-nose Edge - with black steel side skirt",
+      "price": "0",
+      "sku": "TOPRPROF_BNBLK"
+    },
+    {
+      "category": "Top Rail Profile",
+      "title": "Bull-nose Edge - with stainless steel side skirt",
+      "price": "1000",
+      "sku": "TOPRPROF_BNSTAINL"
+    },
+    {
+      "category": "Top Rail Profile",
+      "title": "Bull-nose Edge - with matching timber side skirt",
+      "price": "300",
+      "sku": "TOPRPROF_BNTIM"
+    },
+    {
+      "category": "Top Rail Profile",
+      "title": "Ball Return",
+      "price": "1200",
+      "sku": "TOPRPROF_BALLR"
+    },
+    {
+      "category": "Top Rail Profile",
+      "title": "Ball Return with Timber Cladding",
+      "price": "1800",
+      "sku": "TOPRPROF_BALLRCALD"
+    },
+    {
+      "category": "Top Rail Profile",
+      "title": "Waterfall",
+      "price": "800",
+      "sku": "TOPRPROF_WF"
+    },
+    {
+      "category": "Top Rail Profile",
+      "title": "Live-Edge",
+      "price": "800",
+      "sku": "TOPRPROF_LE"
+    },
+    {
+      "category": "Bracket",
+      "title": "Standard rubber",
+      "price": "0",
+      "sku": "BRACKET_RUBER"
+    },
+    {
+      "category": "Bracket",
+      "title": "Stainless Steel",
+      "price": "750",
+      "sku": "BRACKET_STAINL"
+    },
+    {
+      "category": "Bracket",
+      "title": "Brass",
+      "price": "750",
+      "sku": "BRACKET_BRASSIN"
+    },
+    {
+      "category": "Bracket",
+      "title": "Black Powder",
+      "price": "750",
+      "sku": "BRACKET_BKPOWD"
+    },
+    {
+      "category": "Bracket",
+      "title": "Black Chrome",
+      "price": "750",
+      "sku": "BRACKET_BKCHRO"
+    },
+    {
+      "category": "Bracket",
+      "title": "Copper",
+      "price": "750",
+      "sku": "BRACKET_COPER"
+    },
+    {
+      "category": "Felt",
+      "title": "Olive",
+      "price": "0",
+      "sku": "FELT_STROLI"
+    },
+    {
+      "category": "Felt",
+      "title": "Blue",
+      "price": "0",
+      "sku": "FELT_STRBLU"
+    },
+    {
+      "category": "Felt",
+      "title": "Burgundy",
+      "price": "0",
+      "sku": "FELT_STRBURG"
+    },
+    {
+      "category": "Felt",
+      "title": "Black",
+      "price": "0",
+      "sku": "FELT_STRBLK"
+    },
+    {
+      "category": "Felt",
+      "title": "Red",
+      "price": "0",
+      "sku": "FELT_STRRED"
+    },
+    {
+      "category": "Felt",
+      "title": "Purple",
+      "price": "0",
+      "sku": "FELT_STRPURP"
+    },
+    {
+      "category": "Felt",
+      "title": "Grey",
+      "price": "0",
+      "sku": "FELT_STRGREY"
+    },
+    {
+      "category": "Timber",
+      "title": "Tassie Oak",
+      "price": "0",
+      "sku": "TTAOAK"
+    },
+    {
+      "category": "Timber",
+      "title": "American Oak",
+      "price": "0",
+      "sku": "TTAOAK"
+    },
+    {
+      "category": "Timber",
+      "title": "Messmate",
+      "price": "0",
+      "sku": "TMESM"
+    },
+    {
+      "category": "Timber",
+      "title": "Zebra",
+      "price": "0",
+      "sku": "TBKBT"
+    },
+    {
+      "category": "Timber",
+      "title": "Blackwood",
+      "price": "0",
+      "sku": "TBKWD"
+    },
+    {
+      "category": "Timber",
+      "title": "Myrtle",
+      "price": "0",
+      "sku": "TMYT"
+    },
+    {
+      "category": "Timber",
+      "title": "Marri",
+      "price": "0",
+      "sku": "TBKBN"
+    },
+    {
+      "category": "Timber",
+      "title": "Camphor Laurel",
+      "price": "0",
+      "sku": "TCAMP"
+    },
+    {
+      "category": "Timber",
+      "title": "Jarrah",
+      "price": "0",
+      "sku": "TJARR"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Natural",
+      "price": "0",
+      "sku": "TPNATURAL"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Black",
+      "price": "0",
+      "sku": "TPBLK"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Nutmeg",
+      "price": "0",
+      "sku": "TPNUTMEG"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Riverbed",
+      "price": "0",
+      "sku": "TPRIVER"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Stone",
+      "price": "0",
+      "sku": "TPSTONE"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Teak",
+      "price": "0",
+      "sku": "TPTEAK"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Walnut",
+      "price": "0",
+      "sku": "TPWANUT"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Wenge",
+      "price": "0",
+      "sku": "TPWENGE"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "White",
+      "price": "0",
+      "sku": "TPWHITE"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Jarrah",
+      "price": "0",
+      "sku": "TPJARR"
+    },
+    {
+      "category": "Timber Paint",
+      "title": "Umber",
+      "price": "0",
+      "sku": "TPUMBER"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Odyssey 6ft",
+      "price": "4850",
+      "sku": "B6ODYSSEY",
+      "product_model": "Odyssey",
+      "table_size": "6ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Odyssey 7ft",
+      "price": "4850",
+      "sku": "B7ODYSSEY",
+      "product_model": "Odyssey",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Odyssey 8ft",
+      "price": "5250",
+      "sku": "B8ODYSSEY",
+      "product_model": "Odyssey",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Odyssey 9ft",
+      "price": "6700",
+      "sku": "B9ODYSSEY",
+      "product_model": "Odyssey",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Odyssey Rise 7ft",
+      "price": "6600",
+      "sku": "B7ODYSSEYERISE",
+      "product_model": "Odyssey Rise",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Odyssey Rise 8ft",
+      "price": "7150",
+      "sku": "B8ODYSSEYERISE",
+      "product_model": "Odyssey Rise",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Saga 7ft",
+      "price": "5350",
+      "sku": "\tB7SAGA",
+      "product_model": "Saga",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Saga 8ft",
+      "price": "5750",
+      "sku": "\tB8SAGA",
+      "product_model": "Saga",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Saga 9ft",
+      "price": "8700",
+      "sku": "\tB9SAGA",
+      "product_model": "Saga",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Kings Cross 7ft",
+      "price": "5350",
+      "sku": "B7KINGX",
+      "product_model": "Kings Cross",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Kings Cross 8ft",
+      "price": "5750",
+      "sku": "B8KINGX",
+      "product_model": "Kings Cross",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Kings Cross 9ft",
+      "price": "8700",
+      "sku": "B9KINGX",
+      "product_model": "Kings Cross",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Sleek 7ft",
+      "price": "7000",
+      "sku": "B7SLEEK",
+      "product_model": "Sleek",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Sleek 8ft",
+      "price": "8000",
+      "sku": "B8SLEEK",
+      "product_model": "Sleek",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Cyber 7ft",
+      "price": "9975",
+      "sku": "\tB7CYBERIN",
+      "product_model": "Cyber",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Cyber 8ft",
+      "price": "11025",
+      "sku": "\tB8CYBERIN",
+      "product_model": "Cyber",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Cyber 9ft",
+      "price": "12075",
+      "sku": "\tB9CYBERIN",
+      "product_model": "Cyber",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Double Moon 7ft",
+      "price": "16500",
+      "sku": "B7DBMOON",
+      "product_model": "Double Moon",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Double Moon 8ft",
+      "price": "19500",
+      "sku": "B8DBMOON",
+      "product_model": "Double Moon",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Wave 7ft",
+      "price": "15000",
+      "sku": "B7WAVE",
+      "product_model": "Wave",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Wave 8ft",
+      "price": "18000",
+      "sku": "B8WAVE",
+      "product_model": "Wave",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Victory 7ft",
+      "price": "9975",
+      "sku": "B7VICTORY",
+      "product_model": "Victory",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Victory 8ft",
+      "price": "11025",
+      "sku": "B8VICTORY",
+      "product_model": "Victory",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Victory 9ft",
+      "price": "12075",
+      "sku": "B9VICTORY",
+      "product_model": "Victory",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Regent 6ft",
+      "price": "5800",
+      "sku": "B6REGENT",
+      "product_model": "Regent",
+      "table_size": "6ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Regent 7ft",
+      "price": "5800",
+      "sku": "B7REGENT",
+      "product_model": "Regent",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Regent 8ft",
+      "price": "6300",
+      "sku": "B8REGENT",
+      "product_model": "Regent",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Regent 9ft",
+      "price": "6950",
+      "sku": "B9REGENT",
+      "product_model": "Regent",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Regent Rise 7ft",
+      "price": "10300",
+      "sku": "B7REGENTE",
+      "product_model": "Regent Rise",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Regent Rise 8ft",
+      "price": "11000",
+      "sku": "B8REGENTE",
+      "product_model": "Regent Rise",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Homestead7ft",
+      "price": "12600",
+      "sku": "B7HOMESTEAD",
+      "product_model": "Homestead",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Homestead 8ft",
+      "price": "13550",
+      "sku": "B8HOMESTEAD",
+      "product_model": "Homestead",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Homestead 9ft",
+      "price": "14600",
+      "sku": "B9HOMESTEAD",
+      "product_model": "Homestead",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Southern Cross 7ft",
+      "price": "9975",
+      "sku": "B7SOUTHX",
+      "product_model": "Southern Cross",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Southern Cross 8ft",
+      "price": "11025",
+      "sku": "B8SOUTHX",
+      "product_model": "Southern Cross",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Southern Cross 9ft",
+      "price": "12075",
+      "sku": "B9SOUTHX",
+      "product_model": "Southern Cross",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Executive 6ft",
+      "price": "7550",
+      "sku": "B6EXECUTIVE",
+      "product_model": "Executive",
+      "table_size": "6ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Executive 7ft",
+      "price": "7550",
+      "sku": "B7EXECUTIVE",
+      "product_model": "Executive",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Executive 8ft",
+      "price": "8950",
+      "sku": "B8EXECUTIVE",
+      "product_model": "Executive",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Executive 9ft",
+      "price": "10400",
+      "sku": "B9EXECUTIVE",
+      "product_model": "Executive",
+      "table_size": "9ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Melody 7ft",
+      "price": "15000",
+      "sku": "B7MELODY",
+      "product_model": "Melody",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Melody 8ft",
+      "price": "18000",
+      "sku": "B8MELODY",
+      "product_model": "Melody",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Prism 7ft",
+      "price": "15000",
+      "sku": "B7PRISM",
+      "product_model": "Prism",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Prism 8ft",
+      "price": "18000",
+      "sku": "B8PRISM",
+      "product_model": "Prism",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Rustic 7ft",
+      "price": "7350",
+      "sku": "B7RUSTIC",
+      "product_model": "Rustic",
+      "table_size": "7ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Rustic 8ft",
+      "price": "8400",
+      "sku": "B8RUSTIC",
+      "product_model": "Rustic",
+      "table_size": "8ft"
+    },
+    {
+      "category": "Table Design Model",
+      "title": "Rustic 9ft",
+      "price": "9850",
+      "sku": "B9RUSTIC",
+      "product_model": "Rustic",
+      "table_size": "9ft"
+    }
+  ]
+}
