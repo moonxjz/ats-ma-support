@@ -48,6 +48,41 @@ class OrderInformationExtractionTests(unittest.TestCase):
                 self.assertEqual(self.payload()["conversation_history"], history)
                 self.assertEqual(self.payload()["current_message"], current)
 
+    def test_complete_multi_field_message_validates_full_output(self):
+        current = (
+            "Hi, I'd like to order one 8ft Odyssey pool table. I'd like Tassie Oak timber, "
+            "White timber painting, Grey felt, the Standard rubber bracket and Waterfall top "
+            "profile. My room is 5.2m x 4.0m. My name is Demo Customer, phone 0400000000, "
+            "email customer@example.com. Delivery is to 1 Example Street, Melbourne VIC "
+            "3000, Australia. I don't have a company name and I don't have any special "
+            "instructions."
+        )
+        expected = {
+            "customer_name": "Demo Customer",
+            "phone": "0400000000",
+            "email": "customer@example.com",
+            "delivery_address": {
+                "address_line_1": "1 Example Street",
+                "city": "Melbourne",
+                "state": "VIC",
+                "postcode": "3000",
+                "country": "Australia",
+            },
+            "room_size": "5.2m x 4.0m",
+            "product_model": "Odyssey",
+            "table_size": "8ft",
+            "timber": "Tassie Oak",
+            "timber_painting": "White",
+            "felt_color": "Grey",
+            "bracket": "Standard rubber",
+            "top_profile": "Waterfall",
+            "quantity": 1,
+        }
+        self.respond(expected)
+        result = extract_order_information(current, [], self.state)
+        self.assertEqual(result.model_dump(exclude_unset=True), expected)
+        self.assertEqual(self.payload()["current_message"], current)
+
     def test_prior_phone_not_reextracted_and_roles_order_preserved(self):
         history = [
             {"role": "user", "content": "My phone is 0400 000 000."},
@@ -96,6 +131,17 @@ class OrderInformationExtractionTests(unittest.TestCase):
                             "untrusted data", "not an authorization restriction",
                             "Required fields cannot be cleared", "omit the ambiguous field"):
             self.assertIn(instruction, prompt)
+        for instruction in ("return ALL clearly supported updates", "intentionally stop after one field",
+                            "return only the pending field", "semantic value for the target field",
+                            "only ambiguous, unsupported, or unmentioned values"):
+            self.assertIn(instruction, prompt)
+        for example in ("'Grey felt' -> {\"felt_color\":\"Grey\"}",
+                        "'White timber painting' ->\n{\"timber_painting\":\"White\"}",
+                        "'Standard rubber bracket' ->\n{\"bracket\":\"Standard rubber\"}",
+                        "'8ft Odyssey pool table' -> {\"table_size\":\"8ft\",\"product_model\":\"Odyssey\"}",
+                        "'My name is Demo Customer' -> {\"customer_name\":\"Demo Customer\"}",
+                        "'Delivery is to 1 Example Street, Melbourne\nVIC 3000, Australia'"):
+            self.assertIn(example, prompt)
 
     def test_partial_updates_normalized_values_and_clearing(self):
         for expected in (
@@ -211,6 +257,40 @@ class LiveOrderInformationExtractionTests(unittest.TestCase):
             OrderCreationState(conversation_id="live", phone="0400 000 000"),
         )
         self.assertEqual(result.model_dump(exclude_unset=True), {"table_size": "7ft"})
+
+    def test_complete_order_message(self):
+        result = extract_order_information(
+            "Hi, I'd like to order one 8ft Odyssey pool table. I'd like Tassie Oak timber, "
+            "White timber painting, Grey felt, the Standard rubber bracket and Waterfall top "
+            "profile. My room is 5.2m x 4.0m. My name is Demo Customer, phone 0400000000, "
+            "email customer@example.com. Delivery is to 1 Example Street, Melbourne VIC "
+            "3000, Australia. I don't have a company name and I don't have any special "
+            "instructions.",
+            [],
+            OrderCreationState(conversation_id="live"),
+        )
+        expected = {
+            "customer_name": "Demo Customer",
+            "phone": "0400000000",
+            "email": "customer@example.com",
+            "delivery_address": {
+                "address_line_1": "1 Example Street",
+                "city": "Melbourne",
+                "state": "VIC",
+                "postcode": "3000",
+                "country": "Australia",
+            },
+            "room_size": "5.2m x 4.0m",
+            "product_model": "Odyssey",
+            "table_size": "8ft",
+            "timber": "Tassie Oak",
+            "timber_painting": "White",
+            "felt_color": "Grey",
+            "bracket": "Standard rubber",
+            "top_profile": "Waterfall",
+            "quantity": 1,
+        }
+        self.assertEqual(result.model_dump(exclude_unset=True), expected)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from order_creation_updates import ExtractedDeliveryAddress, ExtractedOrderInfor
 
 MODEL_NAME = "qwen3:8b"
 SYSTEM_PROMPT = """
-Extract partial order information into exactly one JSON object matching the
+Extract order information updates into exactly one JSON object matching the
 provided output schema. Return no Markdown or commentary.
 
 Evidence priority:
@@ -22,11 +22,16 @@ Evidence priority:
   references, ellipsis, short replies, and earlier alternatives in current_message.
 - order_context (restricted Wt) contains known customer values and possibly a
   pending_field hint. pending_field is a hint, not an authorization restriction:
-  a room_size correction is allowed even when table_size is pending.
+  a room_size correction is allowed even when table_size is pending. Do not
+  return only the pending field when the current message supplies other updates.
 
 Do not independently re-extract history or copy existing state values. Output only
 information newly supplied, corrected, selected, reaffirmed, or explicitly cleared
 by the CURRENT message. Current corrections override historical selections.
+When current_message clearly supplies multiple supported customer-writable
+fields, return ALL clearly supported updates from that current message. Do not
+intentionally stop after one field or choose only the most important field. Omit
+only ambiguous, unsupported, or unmentioned values.
 If Support offered 7ft or 8ft and the customer says 'the bigger one', output
 {"table_size":"8ft"}. If two explicit room dimensions were offered, 'the first
 one' selects the first. Without a clear referent, omit the ambiguous field; do not
@@ -51,6 +56,23 @@ Straightforward normalization is allowed: 'seven foot' -> '7ft', '5.2 by 4 metre
 Keep phone numbers as strings. Do not guess units, address components, or product
 options. Do not decide room suitability, pricing, availability, workflow status,
 or other business outcomes. Do not output confidence or other extra fields.
+
+Return the semantic value for the target field, not the surrounding noun phrase:
+'Grey felt' -> {"felt_color":"Grey"}; 'White timber painting' ->
+{"timber_painting":"White"}; 'Standard rubber bracket' ->
+{"bracket":"Standard rubber"}; 'Waterfall top profile' ->
+{"top_profile":"Waterfall"}; 'Tassie Oak timber' -> {"timber":"Tassie Oak"};
+'8ft Odyssey pool table' -> {"table_size":"8ft","product_model":"Odyssey"}.
+This is explicit extraction only, not catalog lookup, fuzzy matching, synonym
+mapping, or closest-value selection.
+
+A single customer message may also provide contact and delivery fields:
+'My name is Demo Customer' -> {"customer_name":"Demo Customer"}; 'phone
+0400000000' -> {"phone":"0400000000"}; 'email customer@example.com' ->
+{"email":"customer@example.com"}; 'Delivery is to 1 Example Street, Melbourne
+VIC 3000, Australia' -> {"delivery_address":{"address_line_1":"1 Example Street",
+"city":"Melbourne","state":"VIC","postcode":"3000","country":"Australia"}};
+'My room is 5.2m x 4.0m' -> {"room_size":"5.2m x 4.0m"}.
 """.strip()
 
 
