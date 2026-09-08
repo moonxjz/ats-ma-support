@@ -744,6 +744,125 @@ class PricingTests(unittest.TestCase):
         self.assertIsNone(state.order_id)
 
 
+class FinalReentryTests(unittest.TestCase):
+    PRICES = ("product_sku", "customisation_price", "unit_price", "shipping_cost", "total_price")
+
+    def final_state(self):
+        state = PricingTests().pricing_state()
+        handle_pricing(state)
+        state.status = OrderWorkflowStatus.AWAITING_USER_INPUT
+        state.pending_field = "old"
+        state.pending_confirmations = ["other", "final_order_confirmed", "final_order_confirmed"]
+        state.last_question = "Keep wording"
+        state.failure_reason = "Keep diagnostic"
+        state.conflicting_fields = {"other": ["value"]}
+        return state
+
+    def merge_and_route(self, previous, values):
+        from order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+        before = previous.model_dump()
+        updated = apply_extracted_order_information(previous, ExtractedOrderInformation(**values))
+        with patch("order_creation_controller.current_utc_time", return_value="fixed"):
+            apply_order_creation_reentry(previous, updated)
+        self.assertEqual(previous.model_dump(), before)
+        self.assertEqual(updated.last_question, previous.last_question)
+        self.assertEqual(updated.failure_reason, previous.failure_reason)
+        self.assertEqual(updated.conflicting_fields, previous.conflicting_fields)
+        return updated
+
+    def test_configuration_and_room_reset_exact_state_and_priority(self):
+        changes = [{field: "different"} for field in (
+            "product_model", "table_size", "top_profile", "bracket", "felt_color", "timber", "timber_painting", "room_size")]
+        changes += [{"felt_color": "Green", "quantity": 3, "delivery_address": {"postcode": "3152"}, "phone": "123"}]
+        for values in changes:
+            with self.subTest(values=values):
+                previous = self.final_state()
+                previous.pending_confirmations += ["configuration_confirmed"] * 2
+                previous.pending_system_fields = ["first", *self.PRICES, "room_size_validation_result", "last", *self.PRICES]
+                updated = self.merge_and_route(previous, values)
+                self.assertEqual(updated.current_stage, OrderCreationStage.COLLECT_REQUIREMENTS)
+                self.assertEqual(updated.status, OrderWorkflowStatus.ACTIVE)
+                self.assertFalse(updated.configuration_confirmed)
+                self.assertFalse(updated.final_order_confirmed)
+                self.assertEqual(updated.order_snapshot, {})
+                self.assertIsNone(updated.room_size_validation_result)
+                self.assertIsNone(updated.pending_field)
+                self.assertEqual(updated.updated_at, "fixed")
+                self.assertTrue(all(getattr(updated, f) is None for f in self.PRICES))
+                self.assertEqual(updated.pending_confirmations, ["other"])
+                self.assertEqual(updated.pending_system_fields, ["first", "last", "room_size_validation_result", *self.PRICES])
+
+    def test_quantity_and_postcode_reprice_with_historical_snapshot(self):
+        for values, shipping, total in (
+            ({"quantity": 3}, "1590", "21990"),
+            ({"delivery_address": {"postcode": "3152"}}, "0", "13600"),
+            ({"quantity": 3, "phone": "123"}, "1590", "21990"),
+        ):
+            with self.subTest(values=values):
+                previous = self.final_state()
+                previous.pending_system_fields = ["shipping_method", *self.PRICES, "other", *self.PRICES]
+                updated = self.merge_and_route(previous, values)
+                self.assertEqual(updated.current_stage, OrderCreationStage.PRICING)
+                self.assertTrue(updated.configuration_confirmed)
+                self.assertEqual(updated.order_snapshot, previous.order_snapshot)
+                self.assertEqual(updated.order_snapshot["quantity"], 2)
+                snapshot = updated.order_snapshot
+                self.assertEqual(updated.room_size_validation_result, previous.room_size_validation_result)
+                self.assertEqual(updated.pending_confirmations, ["other"])
+                self.assertTrue(all(getattr(updated, f) is None for f in self.PRICES))
+                self.assertEqual(updated.pending_system_fields, ["shipping_method", "other", *self.PRICES])
+                with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
+                    execute_order_creation_workflow(updated)
+                self.assertEqual(updated.shipping_cost, Decimal(shipping))
+                self.assertEqual(updated.total_price, Decimal(total))
+                self.assertIs(updated.order_snapshot, snapshot)
+                self.assertEqual(updated.pending_system_fields, ["shipping_method", "other"])
+
+    def test_other_customer_changes_preserve_prices(self):
+        for values in ({"phone": "123"}, {"email": "new@example.com"}, {"customer_name": "New"},
+                       {"delivery_address": {"city": "Richmond"}}, {"company_name": "Company"},
+                       {"customer_instructions": "New instructions"}):
+            previous = self.final_state()
+            updated = self.merge_and_route(previous, values)
+            self.assertEqual(updated.current_stage, OrderCreationStage.FINAL_CONFIRMATION)
+            self.assertEqual(updated.status, OrderWorkflowStatus.ACTIVE)
+            self.assertIsNone(updated.pending_field)
+            self.assertEqual(updated.pending_confirmations, ["other"])
+            self.assertEqual(updated.updated_at, "fixed")
+            for field in (*self.PRICES, "order_snapshot", "configuration_confirmed", "room_size_validation_result", "pending_system_fields"):
+                self.assertEqual(getattr(updated, field), getattr(previous, field))
+
+    def test_no_changes_and_ineligible_states_are_noops(self):
+        for values in ({}, {"quantity": 2}, {"felt_color": "Grey"}, {"delivery_address": {"postcode": "3000"}}):
+            previous = self.final_state()
+            updated = self.merge_and_route(previous, values)
+            self.assertEqual(updated.model_dump(), previous.model_dump())
+        for field, value in (("final_order_confirmed", True), ("configuration_confirmed", False),
+                             ("status", OrderWorkflowStatus.COMPLETED), ("status", OrderWorkflowStatus.FAILED),
+                             ("status", OrderWorkflowStatus.CANCELLED)):
+            previous = self.final_state()
+            setattr(previous, field, value)
+            updated = self.merge_and_route(previous, {"quantity": 3})
+            expected = previous.model_dump()
+            expected["quantity"] = 3
+            self.assertEqual(updated.model_dump(), expected)
+
+    def test_configuration_corrections_reach_real_validation(self):
+        for values, reason in (({"felt_color": "Green"}, BusinessResultReason.UNSUPPORTED_CONFIGURATION_VALUE),
+                               ({"table_size": "9ft"}, BusinessResultReason.ROOM_SIZE_UNSUITABLE),
+                               ({"room_size": "1m x 1m"}, BusinessResultReason.ROOM_SIZE_UNSUITABLE),
+                               ({"felt_color": "Blue"}, BusinessResultReason.CONFIGURATION_CONFIRMATION_REQUIRED)):
+            previous = self.final_state()
+            updated = self.merge_and_route(previous, values)
+            with patch("order_creation_controller.handle_collect_requirements", wraps=handle_collect_requirements) as collect, \
+                 patch("order_creation_controller.handle_validate_configuration", wraps=handle_validate_configuration) as validate:
+                result = execute_order_creation_workflow(updated)
+            collect.assert_called_once()
+            validate.assert_called_once()
+            self.assertEqual(result.reason, reason)
+            self.assertFalse(updated.configuration_confirmed)
+
+
 class ConfirmationAcceptanceTests(unittest.TestCase):
     def setUp(self):
         from order_creation_confirmation import ConfirmationInterpretation

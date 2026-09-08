@@ -73,6 +73,38 @@ class ConfigurationSnapshotTests(unittest.TestCase):
         self.assertEqual(state.model_dump(), before)
 
 
+class ProductAuthorizationTests(unittest.TestCase):
+    def test_seven_fields_and_historical_quantity_without_mutation(self):
+        from order_creation_rules import confirmed_product_configuration_matches
+        from test_order_creation_state import complete_customer_state
+        state = complete_customer_state()
+        state.quantity = 2
+        state.order_snapshot = build_configuration_snapshot(state)
+        state.quantity = 3
+        before = state.model_dump()
+        self.assertTrue(confirmed_product_configuration_matches(state))
+        self.assertEqual(state.model_dump(), before)
+        for field in ("product_model", "table_size", "top_profile", "bracket", "felt_color", "timber", "timber_painting"):
+            changed = state.model_copy(deep=True)
+            setattr(changed, field, "different")
+            with self.subTest(field=field):
+                self.assertFalse(confirmed_product_configuration_matches(changed))
+
+    def test_snapshot_structure_is_required(self):
+        from order_creation_rules import confirmed_product_configuration_matches
+        from test_order_creation_state import complete_customer_state
+        state = complete_customer_state()
+        valid = build_configuration_snapshot(state)
+        invalid = [{}, {**valid, "extra": 1}, {**valid, "felt_color": None}]
+        invalid += [{k: v for k, v in valid.items() if k != field} for field in valid]
+        for snapshot in invalid:
+            state.order_snapshot = snapshot
+            before = state.model_dump()
+            with self.subTest(snapshot=snapshot):
+                self.assertFalse(confirmed_product_configuration_matches(state))
+                self.assertEqual(state.model_dump(), before)
+
+
 class TotalPriceTests(unittest.TestCase):
     def test_exact_decimal_totals_and_per_table_mvp_shipping(self):
         for quantity, shipping, total in ((1, "530", "5780"), (2, "1060", "11560")):

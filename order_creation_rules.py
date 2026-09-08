@@ -78,6 +78,29 @@ def build_configuration_snapshot(state: OrderCreationState) -> dict:
     )}
 
 
+PRODUCT_AUTHORIZATION_FIELDS = (
+    "product_model", "table_size", "top_profile", "bracket", "felt_color",
+    "timber", "timber_painting",
+)
+
+
+def confirmed_product_configuration_matches(state: OrderCreationState) -> bool:
+    """Compare product selections without changing historical snapshot quantity.
+
+    Require the existing eight-field snapshot structure. Quantity is historical
+    evidence, not part of current product authorization; pricing validates the
+    current quantity separately. No lookup, calculation, or mutation occurs here.
+    """
+    snapshot = state.order_snapshot
+    if not isinstance(snapshot, dict) or set(snapshot) != set(PRODUCT_AUTHORIZATION_FIELDS) | {"quantity"}:
+        return False
+    return all(
+        isinstance(snapshot[field], str) and bool(snapshot[field].strip())
+        and snapshot[field] == getattr(state, field)
+        for field in PRODUCT_AUTHORIZATION_FIELDS
+    )
+
+
 def calculate_total_price(
     unit_price: Decimal, per_table_shipping_rate: Decimal, quantity: int,
 ) -> dict:

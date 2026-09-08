@@ -7,6 +7,7 @@ from order_creation_catalog import (
 
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
 from order_creation_rules import build_configuration_snapshot, validate_room_size, calculate_total_price
+from order_creation_rules import PRODUCT_AUTHORIZATION_FIELDS, confirmed_product_configuration_matches
 from order_creation_shipping import lookup_shipping_rate
 from order_creation_updates import ExtractedOrderInformation
 from order_creation_state import (
@@ -228,8 +229,8 @@ def handle_pricing(state: OrderCreationState) -> BusinessResult | None:
         raise ValueError("Pricing requires current_stage=PRICING and status=ACTIVE.")
     if state.configuration_confirmed is not True:
         raise ValueError("Pricing requires configuration confirmation.")
-    if not state.order_snapshot or state.order_snapshot != build_configuration_snapshot(state):
-        raise ValueError("Pricing requires the unchanged confirmed configuration snapshot.")
+    if not confirmed_product_configuration_matches(state):
+        raise ValueError("Pricing requires the unchanged confirmed product configuration.")
     if type(state.quantity) is not int or state.quantity < 1:
         raise ValueError("Pricing requires a positive integer quantity, not bool.")
     postcode = state.delivery_address.postcode
@@ -264,9 +265,12 @@ def apply_order_creation_reentry(
 ) -> None:
     """Invalidate only the independent merged Wt on a confirmation-stage change.
 
-    Uniform revalidation of all customer-data changes is an MVP simplification,
-    not a general ATS dependency policy. No handlers or business outcomes here.
+    Configuration-stage behavior stays uniform. Final-stage changes use the
+    bounded MVP classification below. No handlers or business outcomes here.
     """
+    if previous_state.current_stage == OrderCreationStage.FINAL_CONFIRMATION:
+        _apply_final_confirmation_reentry(previous_state, updated_state)
+        return
     if previous_state.current_stage != OrderCreationStage.CONFIGURATION_CONFIRMATION:
         return
     if previous_state.status not in {
@@ -290,6 +294,52 @@ def apply_order_creation_reentry(
         field for field in updated_state.pending_confirmations
         if field != "configuration_confirmed"
     ]
+    updated_state.updated_at = current_utc_time()
+
+
+def _apply_final_confirmation_reentry(
+    previous_state: OrderCreationState, updated_state: OrderCreationState,
+) -> None:
+    """Prepare an independent merged Wt; never reopen final-authorized orders."""
+    if (previous_state.status not in {OrderWorkflowStatus.ACTIVE, OrderWorkflowStatus.AWAITING_USER_INPUT}
+            or previous_state.final_order_confirmed is not False
+            or previous_state.configuration_confirmed is not True):
+        return
+    fields = set(ExtractedOrderInformation.model_fields)
+    if previous_state.model_dump(include=fields) == updated_state.model_dump(include=fields):
+        return
+    configuration_changed = any(
+        getattr(previous_state, field) != getattr(updated_state, field)
+        for field in (*PRODUCT_AUTHORIZATION_FIELDS, "room_size")
+    )
+    pricing_changed = (previous_state.quantity != updated_state.quantity
+                       or previous_state.delivery_address.postcode != updated_state.delivery_address.postcode)
+    pricing_fields = ("product_sku", "customisation_price", "unit_price", "shipping_cost", "total_price")
+    updated_state.status = OrderWorkflowStatus.ACTIVE
+    updated_state.pending_field = None
+    updated_state.final_order_confirmed = False
+    updated_state.pending_confirmations = [
+        field for field in updated_state.pending_confirmations if field != "final_order_confirmed"
+    ]
+    if configuration_changed or pricing_changed:
+        for field in pricing_fields:
+            setattr(updated_state, field, None)
+        required = (("room_size_validation_result",) if configuration_changed else ()) + pricing_fields
+        updated_state.pending_system_fields = [
+            field for field in updated_state.pending_system_fields if field not in required
+        ] + list(required)
+    if configuration_changed:
+        updated_state.current_stage = OrderCreationStage.COLLECT_REQUIREMENTS
+        updated_state.configuration_confirmed = False
+        updated_state.order_snapshot = {}
+        updated_state.room_size_validation_result = None
+        updated_state.pending_confirmations = [
+            field for field in updated_state.pending_confirmations if field != "configuration_confirmed"
+        ]
+    elif pricing_changed:
+        updated_state.current_stage = OrderCreationStage.PRICING
+    else:
+        updated_state.current_stage = OrderCreationStage.FINAL_CONFIRMATION
     updated_state.updated_at = current_utc_time()
 
 
