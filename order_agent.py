@@ -1,19 +1,30 @@
 """Order Agent internal orchestration for already-routed ORDER_CREATE_WF turns."""
 
 from copy import deepcopy
+from pathlib import Path
 
 from order_creation_confirmation import interpret_confirmation_response
 from business_result import BusinessResult
+from order_creation_order_store import DEFAULT_ORDER_STORE_PATH
 from order_creation_controller import apply_order_creation_reentry, execute_order_creation_workflow
 from order_creation_extraction import ConversationMessage, extract_order_information
 from order_creation_state import OrderCreationStage, OrderCreationState, OrderWorkflowStatus
 from order_creation_updates import apply_extracted_order_information
 
 
+def _execute_with_optional_store_path(updated_state: OrderCreationState, **kwargs) -> BusinessResult:
+    order_store_path = kwargs.pop("order_store_path")
+    if order_store_path == DEFAULT_ORDER_STORE_PATH:
+        return execute_order_creation_workflow(updated_state, **kwargs)
+    return execute_order_creation_workflow(updated_state, **kwargs, order_store_path=order_store_path)
+
+
 def process_order_creation_message(
     current_message: str,
     conversation_history: list[ConversationMessage],
     state: OrderCreationState,
+    *,
+    order_store_path: Path = DEFAULT_ORDER_STORE_PATH,
 ) -> tuple[OrderCreationState, BusinessResult]:
     """Process CREATE_ORDER after classification/routing has already occurred.
 
@@ -25,9 +36,11 @@ def process_order_creation_message(
     Technical exceptions propagate unchanged. The controller-owned re-entry
     policy prepares changed requirements before stage execution. Normal unconfirmed
     configurations return a confirmation request. Accepted confirmation advances
-    through PRICING to final waiting. Final authorization reaches unimplemented
-    CREATE_ORDER and raises before returning its working
-    copy; caller-owned Wt remains unchanged at that temporary boundary.
+    through PRICING to final waiting. After exact final authorization, the
+    controller executes CREATE_ORDER through the deterministic JSON-backed local
+    order-store tool. Successful creation or idempotent replay returns an
+    order_id, reaches COMPLETED, and returns SUCCESS / ORDER_CREATED. Caller-owned
+    Wt remains unchanged because this function works on the validated merged copy.
     """
     extracted = extract_order_information(
         current_message,
@@ -74,10 +87,11 @@ def process_order_creation_message(
     ):
         snapshot = deepcopy(updated_state.final_order_snapshot)
         confirmation = interpret_confirmation_response(current_message, conversation_history, updated_state)
-        result = execute_order_creation_workflow(
+        result = _execute_with_optional_store_path(
             updated_state, final_confirmation=confirmation,
             final_confirmation_snapshot=snapshot,
+            order_store_path=order_store_path,
         )
     else:
-        result = execute_order_creation_workflow(updated_state)
+        result = _execute_with_optional_store_path(updated_state, order_store_path=order_store_path)
     return updated_state, result

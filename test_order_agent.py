@@ -3,6 +3,8 @@
 from copy import deepcopy
 import unittest
 from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, call, patch
 
 from pydantic import ValidationError
@@ -378,18 +380,32 @@ class FinalOrderAgentTests(unittest.TestCase):
                     self.assertNotEqual(updated.final_order_snapshot, self.state.final_order_snapshot)
                     self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
                     self.extract.return_value = ExtractedOrderInformation()
-                    with self.assertRaisesRegex(NotImplementedError, "CREATE_ORDER"):
-                        process_order_creation_message("Yes, proceed", self.history, updated)
+                    with TemporaryDirectory() as tmp:
+                        completed, success = process_order_creation_message(
+                            "Yes, proceed", self.history, updated,
+                            order_store_path=Path(tmp) / "orders.json",
+                        )
+                    self.assertEqual(success.result_status, BusinessResultStatus.SUCCESS)
+                    self.assertEqual(success.reason, BusinessResultReason.ORDER_CREATED)
+                    self.assertTrue(completed.final_order_confirmed)
+                    self.assertEqual(completed.current_stage, OrderCreationStage.COMPLETED)
                     self.assertFalse(updated.final_order_confirmed)
 
     def test_final_authorization_preserves_caller_and_evidence(self):
         before, history = self.state.model_dump(), deepcopy(self.history)
-        with patch("order_agent.execute_order_creation_workflow", wraps=execute_order_creation_workflow) as execute:
-            with self.assertRaisesRegex(NotImplementedError, "CREATE_ORDER"):
-                process_order_creation_message("Yes.", self.history, self.state)
+        with TemporaryDirectory() as tmp, \
+             patch("order_agent.execute_order_creation_workflow", wraps=execute_order_creation_workflow) as execute:
+            updated, result = process_order_creation_message(
+                "Yes.", self.history, self.state,
+                order_store_path=Path(tmp) / "orders.json",
+            )
         working = execute.call_args.args[0]
         self.assertTrue(working.final_order_confirmed)
         self.assertIsNot(execute.call_args.kwargs["final_confirmation_snapshot"], working.final_order_snapshot)
+        self.assertIs(updated, working)
+        self.assertEqual(result.result_status, BusinessResultStatus.SUCCESS)
+        self.assertEqual(result.reason, BusinessResultReason.ORDER_CREATED)
+        self.assertEqual(updated.current_stage, OrderCreationStage.COMPLETED)
         self.assertEqual(self.state.model_dump(), before)
         self.assertEqual(self.history, history)
 

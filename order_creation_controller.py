@@ -1,11 +1,15 @@
 """Deterministic stage execution and bounded re-entry for ORDER_CREATE_WF."""
 
+from pathlib import Path
+
 from order_creation_confirmation import ConfirmationIntent, ConfirmationInterpretation
 from order_creation_catalog import (
     CUSTOMIZATION_CATEGORIES, lookup_base_product, lookup_product_option, lookup_product_pricing,
 )
 
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
+from order_creation_order_store import DEFAULT_ORDER_STORE_PATH, ORDER_ID_PATTERN, ORDER_STATUS_CONFIRMED
+from order_creation_order_store import create_order
 from order_creation_rules import build_configuration_snapshot, validate_room_size, calculate_total_price
 from order_creation_rules import PRODUCT_AUTHORIZATION_FIELDS, confirmed_product_configuration_matches
 from order_creation_rules import build_final_order_snapshot, final_order_snapshot_matches
@@ -28,6 +32,7 @@ def execute_order_creation_workflow(
     confirmation_snapshot: dict | None = None,
     final_confirmation: ConfirmationInterpretation | None = None,
     final_confirmation_snapshot: FinalOrderSnapshot | None = None,
+    order_store_path: Path = DEFAULT_ORDER_STORE_PATH,
 ) -> BusinessResult:
     """Run implemented stages until a handler produces a business result.
 
@@ -67,6 +72,7 @@ def execute_order_creation_workflow(
             OrderCreationStage.CONFIGURATION_CONFIRMATION,
             OrderCreationStage.PRICING,
             OrderCreationStage.FINAL_CONFIRMATION,
+            OrderCreationStage.CREATE_ORDER,
         }:
             raise NotImplementedError(f"Workflow stage is not implemented: {stage.value}")
         if stage in visited_stages:
@@ -86,6 +92,8 @@ def execute_order_creation_workflow(
             )
             final_confirmation = None
             final_confirmation_snapshot = None
+        elif stage == OrderCreationStage.CREATE_ORDER:
+            result = handle_create_order(state, store_path=order_store_path)
         else:
             if confirmation is None and confirmation_snapshot is None:
                 result = handle_configuration_confirmation(state)
@@ -105,6 +113,64 @@ def execute_order_creation_workflow(
             raise RuntimeError(f"Handler returned None without stage advancement: {stage.value}")
         if state.status != OrderWorkflowStatus.ACTIVE:
             raise RuntimeError("Internal continuation requires status=ACTIVE.")
+
+
+def handle_create_order(
+    state: OrderCreationState,
+    *,
+    store_path: Path = DEFAULT_ORDER_STORE_PATH,
+) -> BusinessResult:
+    """Commit the exact confirmed final snapshot through the create_order adapter."""
+    if state.current_stage != OrderCreationStage.CREATE_ORDER:
+        raise ValueError("Create order requires current_stage=CREATE_ORDER.")
+    if state.status != OrderWorkflowStatus.ACTIVE:
+        raise ValueError("Create order requires status=ACTIVE.")
+    if state.final_order_confirmed is not True:
+        raise ValueError("Create order requires explicit final authorization.")
+    if "final_order_confirmed" in state.pending_confirmations:
+        raise ValueError("Create order requires final confirmation to be consumed.")
+    if state.final_order_snapshot is None:
+        raise ValueError("Create order requires a confirmed final snapshot.")
+    snapshot = FinalOrderSnapshot.model_validate(state.final_order_snapshot)
+    if not final_order_snapshot_matches(state, snapshot):
+        raise ValueError("Create order requires current state to match the confirmed final snapshot.")
+
+    result = create_order(
+        workflow_id=state.workflow_id,
+        conversation_id=state.conversation_id,
+        confirmed_snapshot=snapshot,
+        store_path=store_path,
+    )
+    record = result.record
+    if (record.source_workflow_id != state.workflow_id
+            or record.conversation_id != state.conversation_id
+            or record.order != snapshot
+            or ORDER_ID_PATTERN.fullmatch(record.order_id) is None
+            or record.order_status != ORDER_STATUS_CONFIRMED):
+        raise RuntimeError("create_order returned committed evidence that does not match workflow state.")
+
+    now = current_utc_time()
+    state.order_id = record.order_id
+    state.order_status = record.order_status
+    state.status = OrderWorkflowStatus.COMPLETED
+    state.current_stage = OrderCreationStage.COMPLETED
+    state.pending_field = None
+    state.updated_at = now
+    return BusinessResult(
+        workflow_id=state.workflow_id,
+        source_agent="ORDER_AGENT",
+        action="CREATE_ORDER",
+        current_stage=OrderCreationStage.COMPLETED.value,
+        result_status=BusinessResultStatus.SUCCESS,
+        reason=BusinessResultReason.ORDER_CREATED,
+        data={
+            "order_id": record.order_id,
+            "order_status": record.order_status,
+            "created": result.created,
+        },
+        required_input=[],
+        error=None,
+    )
 
 
 def handle_final_confirmation(

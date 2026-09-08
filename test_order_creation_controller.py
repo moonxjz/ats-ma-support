@@ -2,6 +2,9 @@
 
 import unittest
 from decimal import Decimal
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from business_result import BusinessResultReason, BusinessResultStatus
@@ -12,6 +15,7 @@ from order_creation_controller import (
     handle_collect_requirements,
     handle_validate_configuration,
     handle_pricing,
+    handle_create_order,
 )
 from order_creation_state import (
     OrderCreationStage,
@@ -429,7 +433,14 @@ class WorkflowExecutionTests(unittest.TestCase):
 
     def test_direct_unimplemented_stages_do_not_mutate(self):
         for stage in OrderCreationStage:
-            if stage in (OrderCreationStage.COLLECT_REQUIREMENTS, OrderCreationStage.VALIDATE_CONFIGURATION, OrderCreationStage.CONFIGURATION_CONFIRMATION, OrderCreationStage.PRICING, OrderCreationStage.FINAL_CONFIRMATION):
+            if stage in (
+                OrderCreationStage.COLLECT_REQUIREMENTS,
+                OrderCreationStage.VALIDATE_CONFIGURATION,
+                OrderCreationStage.CONFIGURATION_CONFIRMATION,
+                OrderCreationStage.PRICING,
+                OrderCreationStage.FINAL_CONFIRMATION,
+                OrderCreationStage.CREATE_ORDER,
+            ):
                 continue
             with self.subTest(stage=stage):
                 state = complete_customer_state()
@@ -981,24 +992,124 @@ class FinalConfirmationTests(unittest.TestCase):
     def test_matched_and_free_shipping_authorize_exact_order(self):
         from order_creation_confirmation import ConfirmationInterpretation
         for postcode, cost in (("3000", Decimal("1060")), ("3152", Decimal("0"))):
-            state = self.waiting(postcode)
-            snapshot = state.final_order_snapshot
-            self.assertEqual(snapshot.shipping_cost, cost)
-            with patch("order_creation_controller.lookup_shipping_rate") as shipping, \
-                 patch("order_creation_controller.calculate_total_price") as totals:
-                with self.assertRaisesRegex(NotImplementedError, "CREATE_ORDER"):
-                    execute_order_creation_workflow(state,
+            with TemporaryDirectory() as tmp:
+                store_path = Path(tmp) / "orders.json"
+                state = self.waiting(postcode)
+                snapshot = state.final_order_snapshot
+                self.assertEqual(snapshot.shipping_cost, cost)
+                with patch("order_creation_controller.lookup_shipping_rate") as shipping, \
+                     patch("order_creation_controller.calculate_total_price") as totals:
+                    result = execute_order_creation_workflow(
+                        state,
                         final_confirmation=ConfirmationInterpretation(intent="CONFIRMED"),
-                        final_confirmation_snapshot=snapshot)
-                shipping.assert_not_called()
-                totals.assert_not_called()
-            self.assertTrue(state.final_order_confirmed)
-            self.assertEqual(state.current_stage, OrderCreationStage.CREATE_ORDER)
-            self.assertEqual(state.status, OrderWorkflowStatus.ACTIVE)
-            self.assertNotIn("final_order_confirmed", state.pending_confirmations)
-            self.assertIs(state.final_order_snapshot, snapshot)
-            self.assertIsNone(state.order_id)
-            self.assertIsNone(state.failure_reason)
+                        final_confirmation_snapshot=snapshot,
+                        order_store_path=store_path,
+                    )
+                    shipping.assert_not_called()
+                    totals.assert_not_called()
+                self.assertEqual(result.result_status, BusinessResultStatus.SUCCESS)
+                self.assertEqual(result.reason, BusinessResultReason.ORDER_CREATED)
+                self.assertEqual(result.data, {
+                    "order_id": "ORD-000001",
+                    "order_status": "CONFIRMED",
+                    "created": True,
+                })
+                self.assertTrue(state.final_order_confirmed)
+                self.assertEqual(state.current_stage, OrderCreationStage.COMPLETED)
+                self.assertEqual(state.status, OrderWorkflowStatus.COMPLETED)
+                self.assertNotIn("final_order_confirmed", state.pending_confirmations)
+                self.assertIs(state.final_order_snapshot, snapshot)
+                self.assertEqual(state.order_id, "ORD-000001")
+                self.assertEqual(state.order_status, "CONFIRMED")
+                self.assertIsNone(state.failure_reason)
+
+    def test_create_order_guards_prevent_store_call_and_mutation(self):
+        for field, value in (
+            ("current_stage", OrderCreationStage.FINAL_CONFIRMATION),
+            ("status", OrderWorkflowStatus.AWAITING_USER_INPUT),
+            ("final_order_confirmed", False),
+            ("pending_confirmations", ["final_order_confirmed"]),
+            ("final_order_snapshot", None),
+            ("phone", "changed"),
+        ):
+            state = self.waiting()
+            state.final_order_confirmed = True
+            state.current_stage = OrderCreationStage.CREATE_ORDER
+            state.status = OrderWorkflowStatus.ACTIVE
+            state.pending_confirmations = [
+                field for field in state.pending_confirmations if field != "final_order_confirmed"
+            ]
+            setattr(state, field, value)
+            before = state.model_copy(deep=True)
+            with self.subTest(field=field), patch("order_creation_controller.create_order") as create:
+                with self.assertRaises(ValueError):
+                    handle_create_order(state, store_path=Path("unused.json"))
+                create.assert_not_called()
+            self.assertEqual(state, before)
+
+    def test_create_order_verifies_returned_record_before_success_mutation(self):
+        state = self.waiting()
+        state.final_order_confirmed = True
+        state.current_stage = OrderCreationStage.CREATE_ORDER
+        cases = (
+            {"source_workflow_id": "WF-OTHER"},
+            {"conversation_id": "C-OTHER"},
+            {"order": state.final_order_snapshot.model_copy(update={"phone": "changed"})},
+            {"order_id": "BAD-1"},
+            {"order_status": "PENDING"},
+        )
+        for override in cases:
+            state = self.waiting()
+            state.final_order_confirmed = True
+            state.current_stage = OrderCreationStage.CREATE_ORDER
+            state.status = OrderWorkflowStatus.ACTIVE
+            state.pending_confirmations = [
+                field for field in state.pending_confirmations if field != "final_order_confirmed"
+            ]
+            base_record = {
+                "order_id": "ORD-000001",
+                "source_workflow_id": state.workflow_id,
+                "conversation_id": state.conversation_id,
+                "created_at": state.created_at,
+                "order_status": "CONFIRMED",
+                "order": state.final_order_snapshot,
+            }
+            before = state.model_copy(deep=True)
+            record = SimpleNamespace(**(base_record | override))
+            with self.subTest(override=override), patch(
+                "order_creation_controller.create_order",
+                return_value=SimpleNamespace(record=record, created=True),
+            ):
+                with self.assertRaises(RuntimeError):
+                    handle_create_order(state, store_path=Path("unused.json"))
+            self.assertEqual(state, before)
+
+    def test_create_order_replay_with_matching_store_completes_without_duplicate(self):
+        with TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "orders.json"
+            state = self.waiting()
+            snapshot = state.final_order_snapshot
+            state.final_order_confirmed = True
+            state.current_stage = OrderCreationStage.CREATE_ORDER
+            state.status = OrderWorkflowStatus.ACTIVE
+            state.pending_confirmations = [
+                field for field in state.pending_confirmations if field != "final_order_confirmed"
+            ]
+            first = handle_create_order(state, store_path=store_path)
+            replay = self.waiting()
+            replay.workflow_id = state.workflow_id
+            replay.final_order_confirmed = True
+            replay.current_stage = OrderCreationStage.CREATE_ORDER
+            replay.status = OrderWorkflowStatus.ACTIVE
+            replay.pending_confirmations = [
+                field for field in replay.pending_confirmations if field != "final_order_confirmed"
+            ]
+            replay_result = handle_create_order(replay, store_path=store_path)
+            self.assertEqual(first.data["order_id"], replay_result.data["order_id"])
+            self.assertFalse(replay_result.data["created"])
+            self.assertEqual(replay.order_id, "ORD-000001")
+            self.assertEqual(replay.current_stage, OrderCreationStage.COMPLETED)
+            self.assertEqual(replay.final_order_snapshot, snapshot)
 
     def test_declined_ambiguous_and_change_request_stay_waiting(self):
         from order_creation_confirmation import ConfirmationInterpretation
