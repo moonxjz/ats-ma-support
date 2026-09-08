@@ -134,5 +134,52 @@ class LiveConfirmationTests(unittest.TestCase):
         self.check_intent("What size did I choose again?", "AMBIGUOUS")
 
 
+
+def final_waiting_state():
+    state = waiting_state()
+    execute_order_creation_workflow(state, confirmation=ConfirmationInterpretation(intent="CONFIRMED"),
+                                    confirmation_snapshot=state.order_snapshot.copy())
+    return state
+
+
+class FinalConfirmationInterpreterTests(ConfirmationInterpreterTests):
+    def setUp(self):
+        super().setUp()
+        self.state = final_waiting_state()
+        self.history = [{"role": "assistant", "content": "Authorize proceeding with this exact priced order: " +
+                         self.state.final_order_snapshot.model_dump_json()}]
+
+    def test_mocked_examples_and_authoritative_context(self):
+        for message, intent in (("Yes.", "CONFIRMED"), ("Looks good.", "CONFIRMED"),
+                                ("Yes, proceed.", "CONFIRMED"), ("No.", "DECLINED"),
+                                ("I'm not sure.", "AMBIGUOUS"), ("Why is shipping $1,060?", "AMBIGUOUS"),
+                                ("Yes, but change it", "CHANGE_REQUESTED")):
+            self.chat.return_value.message.content = json.dumps({"intent": intent})
+            before = self.state.model_dump()
+            result = interpret_confirmation_response(message, self.history, self.state)
+            self.assertEqual(result.intent.value, intent)
+            args = self.chat.call_args.kwargs
+            context = json.loads(args["messages"][1]["content"])["confirmation_context"]
+            self.assertEqual(context, {"current_stage": "FINAL_CONFIRMATION", "final_confirmation_pending": True,
+                "final_order_snapshot": self.state.final_order_snapshot.model_dump(mode="json")})
+            self.assertEqual(args["model"], "qwen3:8b")
+            self.assertIn("Configuration approval alone is not final purchase authorization", args["messages"][0]["content"])
+            self.assertEqual(self.state.model_dump(), before)
+
+
+@unittest.skipUnless(os.environ.get("ATS_RUN_LIVE_FINAL_CONFIRMATION_TESTS") == "1",
+                     "Live final confirmation tests are opt-in")
+class LiveFinalConfirmationTests(unittest.TestCase):
+    def test_final_intents(self):
+        state = final_waiting_state()
+        history = [{"role": "assistant", "content": "Please authorize proceeding with this exact priced order: " +
+                    state.final_order_snapshot.model_dump_json()}]
+        for message, expected in (("Yes.", "CONFIRMED"), ("Looks good, place the order.", "CONFIRMED"),
+                                  ("No.", "DECLINED"), ("I'm not sure.", "AMBIGUOUS"),
+                                  ("Why is shipping $1,060?", "AMBIGUOUS")):
+            with self.subTest(message=message):
+                self.assertEqual(interpret_confirmation_response(message, history, state).intent.value, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

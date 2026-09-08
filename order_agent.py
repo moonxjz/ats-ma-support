@@ -25,7 +25,8 @@ def process_order_creation_message(
     Technical exceptions propagate unchanged. The controller-owned re-entry
     policy prepares changed requirements before stage execution. Normal unconfirmed
     configurations return a confirmation request. Accepted confirmation advances
-    through PRICING to unimplemented FINAL_CONFIRMATION and raises before returning its working
+    through PRICING to final waiting. Final authorization reaches unimplemented
+    CREATE_ORDER and raises before returning its working
     copy; caller-owned Wt remains unchanged at that temporary boundary.
     """
     extracted = extract_order_information(
@@ -58,6 +59,24 @@ def process_order_creation_message(
         )
         result = execute_order_creation_workflow(
             updated_state, confirmation=confirmation, confirmation_snapshot=snapshot,
+        )
+    elif (
+        state.current_stage == OrderCreationStage.FINAL_CONFIRMATION
+        and state.status == OrderWorkflowStatus.AWAITING_USER_INPUT
+        and not state.final_order_confirmed
+        and "final_order_confirmed" in state.pending_confirmations
+        and state.final_order_snapshot is not None
+        and updated_state.current_stage == OrderCreationStage.FINAL_CONFIRMATION
+        and updated_state.status == OrderWorkflowStatus.AWAITING_USER_INPUT
+        and not updated_state.final_order_confirmed
+        and "final_order_confirmed" in updated_state.pending_confirmations
+        and updated_state.final_order_snapshot is not None
+    ):
+        snapshot = deepcopy(updated_state.final_order_snapshot)
+        confirmation = interpret_confirmation_response(current_message, conversation_history, updated_state)
+        result = execute_order_creation_workflow(
+            updated_state, final_confirmation=confirmation,
+            final_confirmation_snapshot=snapshot,
         )
     else:
         result = execute_order_creation_workflow(updated_state)

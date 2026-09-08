@@ -176,5 +176,47 @@ class BusinessResultTests(unittest.TestCase):
         self.assertEqual(second.required_input, [])
 
 
+
+class FinalSnapshotModelTests(unittest.TestCase):
+    def snapshot(self):
+        from order_creation_rules import build_final_order_snapshot
+        from test_order_creation_controller import PricingTests
+        from order_creation_controller import handle_pricing
+        state = PricingTests().pricing_state()
+        handle_pricing(state)
+        return build_final_order_snapshot(state)
+
+    def test_exact_schema_frozen_nested_and_roundtrip(self):
+        from order_creation_state import FinalOrderSnapshot
+        snapshot = self.snapshot()
+        self.assertEqual(set(FinalOrderSnapshot.model_fields), {
+            "customer_name", "company_name", "phone", "email", "delivery_address", "customer_instructions",
+            "product_model", "table_size", "top_profile", "bracket", "felt_color", "timber", "timber_painting",
+            "room_size", "room_size_validation_result", "quantity", "product_sku", "customisation_price",
+            "unit_price", "shipping_cost", "total_price"})
+        self.assertEqual(FinalOrderSnapshot.model_validate_json(snapshot.model_dump_json()), snapshot)
+        self.assertIsInstance(snapshot.shipping_cost, Decimal)
+        with self.assertRaises(ValidationError):
+            snapshot.quantity = 3
+        with self.assertRaises(ValidationError):
+            snapshot.delivery_address.city = "Other"
+        state = OrderCreationState(conversation_id="roundtrip", final_order_snapshot=snapshot)
+        self.assertEqual(OrderCreationState.model_validate_json(state.model_dump_json()), state)
+
+    def test_invalid_values_and_extra_fields(self):
+        from order_creation_state import FinalOrderSnapshot
+        values = self.snapshot().model_dump()
+        for field, value in [("quantity", v) for v in (0, -1, True, 1.0, "2", None)] + [
+            ("phone", " "), ("company_name", ""), ("room_size_validation_result", "UNSUITABLE"),
+            ("shipping_method", None), ("shipping_quote_status", "anything")
+        ] + [(f, v) for f in ("unit_price", "customisation_price", "shipping_cost", "total_price")
+             for v in (None, Decimal("NaN"), Decimal("Infinity"), Decimal("-1"), 1.0)]:
+            with self.subTest(field=field, value=value), self.assertRaises(ValidationError):
+                FinalOrderSnapshot.model_validate({**values, field: value})
+        for field in values["delivery_address"]:
+            with self.subTest(address=field), self.assertRaises(ValidationError):
+                FinalOrderSnapshot.model_validate({**values, "delivery_address": {**values["delivery_address"], field: " "}})
+
+
 if __name__ == "__main__":
     unittest.main()

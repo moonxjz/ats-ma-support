@@ -8,11 +8,13 @@ from order_creation_catalog import (
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
 from order_creation_rules import build_configuration_snapshot, validate_room_size, calculate_total_price
 from order_creation_rules import PRODUCT_AUTHORIZATION_FIELDS, confirmed_product_configuration_matches
+from order_creation_rules import build_final_order_snapshot, final_order_snapshot_matches
 from order_creation_shipping import lookup_shipping_rate
 from order_creation_updates import ExtractedOrderInformation
 from order_creation_state import (
     OrderCreationStage,
     OrderCreationState,
+    FinalOrderSnapshot,
     OrderWorkflowStatus,
     determine_missing_fields,
 )
@@ -24,6 +26,8 @@ def execute_order_creation_workflow(
     *,
     confirmation: ConfirmationInterpretation | None = None,
     confirmation_snapshot: dict | None = None,
+    final_confirmation: ConfirmationInterpretation | None = None,
+    final_confirmation_snapshot: FinalOrderSnapshot | None = None,
 ) -> BusinessResult:
     """Run implemented stages until a handler produces a business result.
 
@@ -42,6 +46,14 @@ def execute_order_creation_workflow(
         if confirmation is None:
             raise ValueError("confirmation_snapshot requires a confirmation interpretation.")
 
+    if final_confirmation is not None or final_confirmation_snapshot is not None:
+        if confirmation is not None or confirmation_snapshot is not None:
+            raise ValueError("Configuration and final confirmation arguments cannot be mixed.")
+        if state.current_stage != OrderCreationStage.FINAL_CONFIRMATION:
+            raise ValueError("Final confirmation arguments require FINAL_CONFIRMATION entry.")
+        if final_confirmation is None or final_confirmation_snapshot is None:
+            raise ValueError("Final confirmation requires interpretation and snapshot evidence.")
+
     visited_stages = set()
     while True:
         try:
@@ -54,6 +66,7 @@ def execute_order_creation_workflow(
             OrderCreationStage.VALIDATE_CONFIGURATION,
             OrderCreationStage.CONFIGURATION_CONFIRMATION,
             OrderCreationStage.PRICING,
+            OrderCreationStage.FINAL_CONFIRMATION,
         }:
             raise NotImplementedError(f"Workflow stage is not implemented: {stage.value}")
         if stage in visited_stages:
@@ -66,6 +79,13 @@ def execute_order_creation_workflow(
             result = handle_validate_configuration(state)
         elif stage == OrderCreationStage.PRICING:
             result = handle_pricing(state)
+        elif stage == OrderCreationStage.FINAL_CONFIRMATION:
+            result = handle_final_confirmation(
+                state, confirmation=final_confirmation,
+                confirmation_snapshot=final_confirmation_snapshot,
+            )
+            final_confirmation = None
+            final_confirmation_snapshot = None
         else:
             if confirmation is None and confirmation_snapshot is None:
                 result = handle_configuration_confirmation(state)
@@ -85,6 +105,71 @@ def execute_order_creation_workflow(
             raise RuntimeError(f"Handler returned None without stage advancement: {stage.value}")
         if state.status != OrderWorkflowStatus.ACTIVE:
             raise RuntimeError("Internal continuation requires status=ACTIVE.")
+
+
+def handle_final_confirmation(
+    state: OrderCreationState,
+    *,
+    confirmation: ConfirmationInterpretation | None = None,
+    confirmation_snapshot: FinalOrderSnapshot | None = None,
+) -> BusinessResult | None:
+    """Wait or authorize exact priced evidence; never look up or recalculate freight.
+
+    Stored zero shipping is valid MVP free shipping. Corrections are prepared by
+    Stage 12D before entry. A stale response never rebuilds and authorizes at once.
+    """
+    if state.current_stage != OrderCreationStage.FINAL_CONFIRMATION or state.status not in {
+        OrderWorkflowStatus.ACTIVE, OrderWorkflowStatus.AWAITING_USER_INPUT,
+    }:
+        raise ValueError("Final confirmation requires eligible FINAL_CONFIRMATION entry.")
+    if state.final_order_confirmed is not False:
+        raise ValueError("Final order is already authorized.")
+    if (confirmation is None) != (confirmation_snapshot is None):
+        raise ValueError("Final confirmation requires interpretation and snapshot evidence together.")
+    candidate = build_final_order_snapshot(state)
+    if state.final_order_snapshot is not None:
+        FinalOrderSnapshot.model_validate(state.final_order_snapshot)
+    if confirmation is not None:
+        confirmation = ConfirmationInterpretation.model_validate(confirmation)
+        evidence = FinalOrderSnapshot.model_validate(confirmation_snapshot)
+        if (state.status != OrderWorkflowStatus.AWAITING_USER_INPUT
+                or "final_order_confirmed" not in state.pending_confirmations
+                or state.final_order_snapshot is None
+                or evidence != state.final_order_snapshot
+                or not final_order_snapshot_matches(state, state.final_order_snapshot)):
+            raise ValueError("Final confirmation evidence is not pending or is stale.")
+        if confirmation.intent == ConfirmationIntent.CONFIRMED:
+            now = current_utc_time()
+            state.final_order_confirmed = True
+            state.pending_confirmations = [f for f in state.pending_confirmations if f != "final_order_confirmed"]
+            state.pending_field = None
+            state.status = OrderWorkflowStatus.ACTIVE
+            state.current_stage = OrderCreationStage.CREATE_ORDER
+            state.updated_at = now
+            return None
+
+    pending = [f for f in state.pending_confirmations if f != "final_order_confirmed"] + ["final_order_confirmed"]
+    changed = (state.final_order_snapshot != candidate
+               or state.status != OrderWorkflowStatus.AWAITING_USER_INPUT
+               or state.pending_field is not None or state.pending_confirmations != pending)
+    if changed:
+        now = current_utc_time()
+        if state.final_order_snapshot != candidate:
+            state.final_order_snapshot = candidate
+        state.status = OrderWorkflowStatus.AWAITING_USER_INPUT
+        state.pending_field = None
+        state.pending_confirmations = pending
+        state.updated_at = now
+    data = {"final_order_snapshot": state.final_order_snapshot.model_dump(mode="json")}
+    if confirmation is not None:
+        data["confirmation_intent"] = confirmation.intent.value
+    return BusinessResult(
+        workflow_id=state.workflow_id, source_agent="ORDER_AGENT", action="CREATE_ORDER",
+        current_stage=state.current_stage.value,
+        result_status=BusinessResultStatus.NEEDS_USER_INPUT,
+        reason=BusinessResultReason.FINAL_CONFIRMATION_REQUIRED,
+        required_input=["final_order_confirmed"], data=data,
+    )
 
 
 def handle_collect_requirements(state: OrderCreationState) -> BusinessResult | None:

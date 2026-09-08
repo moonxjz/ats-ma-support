@@ -308,8 +308,8 @@ class OrderAgentTests(unittest.TestCase):
         self.extract.return_value = ExtractedOrderInformation(table_size="8ft")
         self.interpret.return_value = ConfirmationInterpretation(intent="CONFIRMED")
         with patch("order_agent.execute_order_creation_workflow", wraps=execute_order_creation_workflow) as execute:
-            with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
-                process_order_creation_message("Yes, 8ft is correct", self.history, state)
+            updated, result = process_order_creation_message("Yes, 8ft is correct", self.history, state)
+            self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
         self.interpret.assert_called_once()
         working = self.interpret.call_args.args[2]
         self.assertIs(working, execute.call_args.args[0])
@@ -342,6 +342,69 @@ class OrderAgentTests(unittest.TestCase):
             self.assertIs(caught.exception, reentry_error)
             self.interpret.assert_not_called()
             execute.assert_not_called()
+
+
+
+class FinalOrderAgentTests(unittest.TestCase):
+    def setUp(self):
+        from test_order_creation_confirmation import final_waiting_state
+        self.state = final_waiting_state()
+        self.history = [{"role": "assistant", "content": "Please authorize this exact final order."}]
+        self.ep = patch("order_agent.extract_order_information", return_value=ExtractedOrderInformation())
+        self.ip = patch("order_agent.interpret_confirmation_response", return_value=ConfirmationInterpretation(intent="CONFIRMED"))
+        self.extract, self.interpret = self.ep.start(), self.ip.start()
+        self.addCleanup(self.ep.stop)
+        self.addCleanup(self.ip.stop)
+
+    def test_correction_first_and_fresh_affirmative(self):
+        for message, values, stage in (
+            ("Yes, but make it 3 tables", {"quantity": 3}, OrderCreationStage.FINAL_CONFIRMATION),
+            ("Looks good, change felt to Blue", {"felt_color": "Blue"}, OrderCreationStage.CONFIGURATION_CONFIRMATION),
+            ("Yes, deliver to 3152", {"delivery_address": {"postcode": "3152"}}, OrderCreationStage.FINAL_CONFIRMATION),
+            ("Yes, phone is 123", {"phone": "123"}, OrderCreationStage.FINAL_CONFIRMATION),
+            ("Change city", {"delivery_address": {"city": "Richmond"}}, OrderCreationStage.FINAL_CONFIRMATION),
+        ):
+            with self.subTest(values=values):
+                self.interpret.reset_mock()
+                self.extract.return_value = ExtractedOrderInformation(**values)
+                before, history = self.state.model_dump(), deepcopy(self.history)
+                updated, result = process_order_creation_message(message, self.history, self.state)
+                self.interpret.assert_not_called()
+                self.assertEqual(updated.current_stage, stage)
+                self.assertFalse(updated.final_order_confirmed)
+                self.assertEqual(self.state.model_dump(), before)
+                self.assertEqual(self.history, history)
+                if stage == OrderCreationStage.FINAL_CONFIRMATION:
+                    self.assertNotEqual(updated.final_order_snapshot, self.state.final_order_snapshot)
+                    self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
+                    self.extract.return_value = ExtractedOrderInformation()
+                    with self.assertRaisesRegex(NotImplementedError, "CREATE_ORDER"):
+                        process_order_creation_message("Yes, proceed", self.history, updated)
+                    self.assertFalse(updated.final_order_confirmed)
+
+    def test_final_authorization_preserves_caller_and_evidence(self):
+        before, history = self.state.model_dump(), deepcopy(self.history)
+        with patch("order_agent.execute_order_creation_workflow", wraps=execute_order_creation_workflow) as execute:
+            with self.assertRaisesRegex(NotImplementedError, "CREATE_ORDER"):
+                process_order_creation_message("Yes.", self.history, self.state)
+        working = execute.call_args.args[0]
+        self.assertTrue(working.final_order_confirmed)
+        self.assertIsNot(execute.call_args.kwargs["final_confirmation_snapshot"], working.final_order_snapshot)
+        self.assertEqual(self.state.model_dump(), before)
+        self.assertEqual(self.history, history)
+
+    def test_waiting_and_failure_preserve_inputs(self):
+        before = self.state.model_dump()
+        for intent in ("DECLINED", "AMBIGUOUS", "CHANGE_REQUESTED"):
+            self.interpret.return_value = ConfirmationInterpretation(intent=intent)
+            updated, result = process_order_creation_message("No or question", self.history, self.state)
+            self.assertFalse(updated.final_order_confirmed)
+            self.assertEqual(result.data["confirmation_intent"], intent)
+            self.assertEqual(self.state.model_dump(), before)
+        self.interpret.side_effect = ConnectionError("Ollama unavailable")
+        with self.assertRaises(ConnectionError):
+            process_order_creation_message("Yes", self.history, self.state)
+        self.assertEqual(self.state.model_dump(), before)
 
 
 if __name__ == "__main__":

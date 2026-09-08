@@ -131,5 +131,66 @@ class TotalPriceTests(unittest.TestCase):
         self.assertEqual(second["total_price"], Decimal("11560"))
 
 
+
+class FinalSnapshotRulesTests(unittest.TestCase):
+    def state(self):
+        from test_order_creation_controller import PricingTests
+        from order_creation_controller import handle_pricing
+        state = PricingTests().pricing_state()
+        handle_pricing(state)
+        return state
+
+    def test_pure_independent_exact_current_values(self):
+        from order_creation_rules import build_final_order_snapshot, final_order_snapshot_matches
+        state = self.state()
+        state.quantity = 3
+        before = state.model_dump()
+        snapshot = build_final_order_snapshot(state)
+        self.assertEqual(snapshot.quantity, 3)
+        self.assertEqual(state.order_snapshot["quantity"], 2)
+        self.assertTrue(final_order_snapshot_matches(state, snapshot))
+        self.assertEqual(state.model_dump(), before)
+        state.delivery_address.city = "Changed"
+        self.assertNotEqual(snapshot.delivery_address.city, state.delivery_address.city)
+        self.assertFalse(final_order_snapshot_matches(state, snapshot))
+
+    def test_every_material_field_matches_and_control_is_excluded(self):
+        from order_creation_rules import build_final_order_snapshot, final_order_snapshot_matches
+        state = self.state()
+        snapshot = build_final_order_snapshot(state)
+        for field, value in snapshot.model_dump().items():
+            changed = state.model_copy(deep=True)
+            if field == "delivery_address":
+                changed.delivery_address.address_line_2 = "Suite 2"
+            elif field == "room_size_validation_result":
+                changed.room_size_validation_result = "UNSUITABLE"
+            elif isinstance(value, Decimal):
+                setattr(changed, field, value + 1)
+            elif field == "quantity":
+                changed.quantity += 1
+            else:
+                setattr(changed, field, "Changed")
+            with self.subTest(field=field):
+                try:
+                    self.assertFalse(final_order_snapshot_matches(changed, snapshot))
+                except ValueError:
+                    pass  # Changed authorization/prerequisites reject rather than compare.
+        state.updated_at = "other"
+        state.failure_reason = "diagnostic"
+        state.pending_confirmations = []
+        self.assertTrue(final_order_snapshot_matches(state, snapshot))
+
+    def test_prerequisites_reject_without_mutation(self):
+        from order_creation_rules import build_final_order_snapshot
+        for field, value in (("phone", None), ("configuration_confirmed", False), ("order_snapshot", {}),
+                             ("room_size_validation_result", None), ("product_sku", ""), ("total_price", None)):
+            state = self.state()
+            setattr(state, field, value)
+            before = state.model_dump()
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                build_final_order_snapshot(state)
+            self.assertEqual(state.model_dump(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

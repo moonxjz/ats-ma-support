@@ -6,7 +6,7 @@ business default. Suitable sizes describe room fit, not product availability.
 
 import re
 
-from order_creation_state import OrderCreationState
+from order_creation_state import OrderCreationState, FinalOrderSnapshot, determine_missing_fields
 from decimal import Decimal
 
 
@@ -99,6 +99,27 @@ def confirmed_product_configuration_matches(state: OrderCreationState) -> bool:
         and snapshot[field] == getattr(state, field)
         for field in PRODUCT_AUTHORIZATION_FIELDS
     )
+
+
+def build_final_order_snapshot(state: OrderCreationState) -> FinalOrderSnapshot:
+    """Copy already-validated/priced Wt; no lookup, calculation or mutation.
+
+    PRICING's stored shipping_cost is authoritative, including MVP free shipping.
+    Historical configuration quantity does not constrain current order quantity.
+    """
+    if determine_missing_fields(state):
+        raise ValueError("Final snapshot requires complete customer information.")
+    if state.configuration_confirmed is not True or not confirmed_product_configuration_matches(state):
+        raise ValueError("Final snapshot requires authorized product configuration.")
+    values = {field: getattr(state, field) for field in FinalOrderSnapshot.model_fields}
+    values["delivery_address"] = state.delivery_address.model_dump()
+    return FinalOrderSnapshot.model_validate(values)
+
+
+def final_order_snapshot_matches(state: OrderCreationState, snapshot: FinalOrderSnapshot) -> bool:
+    """Compare all final-order evidence, excluding workflow control/tracking."""
+    validated = FinalOrderSnapshot.model_validate(snapshot)
+    return validated == build_final_order_snapshot(state)
 
 
 def calculate_total_price(

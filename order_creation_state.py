@@ -4,7 +4,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from workflow_state import current_utc_time, generate_workflow_id
 
@@ -34,6 +34,59 @@ class DeliveryAddress(BaseModel):
     state: str | None = None
     postcode: str | None = None
     country: str | None = None
+
+
+class FinalDeliveryAddress(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True, revalidate_instances="always")
+
+    address_line_1: str
+    address_line_2: str | None
+    city: str
+    state: str
+    postcode: str
+    country: str
+
+    @field_validator("*")
+    @classmethod
+    def reject_blank(cls, value):
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("Snapshot strings must not be blank.")
+        return value
+
+
+class FinalOrderSnapshot(BaseModel):
+    """Exact priced-order evidence; zero shipping is valid MVP free shipping."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True, revalidate_instances="always")
+
+    customer_name: str
+    company_name: str | None
+    phone: str
+    email: str
+    delivery_address: FinalDeliveryAddress
+    customer_instructions: str | None
+    product_model: str
+    table_size: str
+    top_profile: str
+    bracket: str
+    felt_color: str
+    timber: str
+    timber_painting: str
+    room_size: str
+    room_size_validation_result: Literal["SUITABLE"]
+    quantity: int = Field(ge=1)
+    product_sku: str
+    customisation_price: Decimal = Field(ge=0, allow_inf_nan=False)
+    unit_price: Decimal = Field(ge=0, allow_inf_nan=False)
+    shipping_cost: Decimal = Field(ge=0, allow_inf_nan=False)
+    total_price: Decimal = Field(ge=0, allow_inf_nan=False)
+
+    @field_validator("*")
+    @classmethod
+    def reject_blank(cls, value):
+        if isinstance(value, str) and not value.strip():
+            raise ValueError("Snapshot strings must not be blank.")
+        return value
 
 
 class OrderCreationState(BaseModel):
@@ -80,6 +133,7 @@ class OrderCreationState(BaseModel):
     shipping_cost: Decimal | None = None
     total_price: Decimal | None = None
     order_snapshot: dict = Field(default_factory=dict)
+    final_order_snapshot: FinalOrderSnapshot | None = None
     approved: bool | None = None
 
     configuration_confirmed: bool = False

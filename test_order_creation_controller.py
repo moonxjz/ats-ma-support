@@ -429,7 +429,7 @@ class WorkflowExecutionTests(unittest.TestCase):
 
     def test_direct_unimplemented_stages_do_not_mutate(self):
         for stage in OrderCreationStage:
-            if stage in (OrderCreationStage.COLLECT_REQUIREMENTS, OrderCreationStage.VALIDATE_CONFIGURATION, OrderCreationStage.CONFIGURATION_CONFIRMATION, OrderCreationStage.PRICING):
+            if stage in (OrderCreationStage.COLLECT_REQUIREMENTS, OrderCreationStage.VALIDATE_CONFIGURATION, OrderCreationStage.CONFIGURATION_CONFIRMATION, OrderCreationStage.PRICING, OrderCreationStage.FINAL_CONFIRMATION):
                 continue
             with self.subTest(stage=stage):
                 state = complete_customer_state()
@@ -644,6 +644,7 @@ class PricingTests(unittest.TestCase):
         state.delivery_address.postcode = postcode
         state.current_stage = OrderCreationStage.PRICING
         state.configuration_confirmed = True
+        state.room_size_validation_result = "SUITABLE"
         state.order_snapshot = build_configuration_snapshot(state)
         return state
 
@@ -735,10 +736,10 @@ class PricingTests(unittest.TestCase):
 
     def test_controller_boundary_preserves_priced_progress(self):
         state = self.pricing_state(quantity=1)
-        with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
-            execute_order_creation_workflow(state)
+        result = execute_order_creation_workflow(state)
+        self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
         self.assertEqual(state.current_stage, OrderCreationStage.FINAL_CONFIRMATION)
-        self.assertEqual(state.status, OrderWorkflowStatus.ACTIVE)
+        self.assertEqual(state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
         self.assertEqual(state.total_price, Decimal("7330"))
         self.assertIsNone(state.failure_reason)
         self.assertIsNone(state.order_id)
@@ -811,8 +812,8 @@ class FinalReentryTests(unittest.TestCase):
                 self.assertEqual(updated.pending_confirmations, ["other"])
                 self.assertTrue(all(getattr(updated, f) is None for f in self.PRICES))
                 self.assertEqual(updated.pending_system_fields, ["shipping_method", "other", *self.PRICES])
-                with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
-                    execute_order_creation_workflow(updated)
+                result = execute_order_creation_workflow(updated)
+                self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
                 self.assertEqual(updated.shipping_cost, Decimal(shipping))
                 self.assertEqual(updated.total_price, Decimal(total))
                 self.assertIs(updated.order_snapshot, snapshot)
@@ -884,17 +885,17 @@ class ConfirmationAcceptanceTests(unittest.TestCase):
         self.assertEqual(self.state.updated_at, "fixed")
         self.assertIs(self.state.order_snapshot, snapshot_object)
         self.assertEqual(self.state.order_snapshot, self.snapshot)
-        with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
-            execute_order_creation_workflow(self.state)
+        result = execute_order_creation_workflow(self.state)
+        self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
         self.assertIsNone(self.state.failure_reason)
 
     def test_executor_continues_through_pricing_without_business_result(self):
-        with self.assertRaisesRegex(NotImplementedError, "FINAL_CONFIRMATION"):
-            execute_order_creation_workflow(self.state, confirmation=self.confirmed,
-                                            confirmation_snapshot=self.snapshot)
+        result = execute_order_creation_workflow(self.state, confirmation=self.confirmed,
+                                                 confirmation_snapshot=self.snapshot)
+        self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
         self.assertTrue(self.state.configuration_confirmed)
         self.assertEqual(self.state.current_stage, OrderCreationStage.FINAL_CONFIRMATION)
-        self.assertEqual(self.state.status, OrderWorkflowStatus.ACTIVE)
+        self.assertEqual(self.state.status, OrderWorkflowStatus.AWAITING_USER_INPUT)
 
     def test_invalid_acceptance_rejected_before_mutation(self):
         cases = [("order_snapshot", {}), ("order_snapshot", {"table_size":"8ft"}),
@@ -944,6 +945,107 @@ class ConfirmationAcceptanceTests(unittest.TestCase):
         self.assertEqual(self.state.model_dump(), before)
         result = execute_order_creation_workflow(self.state)
         self.assertNotIn("confirmation_intent", result.data)
+
+
+
+class FinalConfirmationTests(unittest.TestCase):
+    def waiting(self, postcode="3000"):
+        state = PricingTests().pricing_state(postcode=postcode)
+        execute_order_creation_workflow(state)
+        return state
+
+    def test_waiting_repeat_no_aliasing_or_shipping_operations(self):
+        from order_creation_controller import handle_final_confirmation
+        state = PricingTests().pricing_state()
+        handle_pricing(state)
+        historical = state.order_snapshot
+        state.pending_confirmations = ["other", "final_order_confirmed", "final_order_confirmed"]
+        with patch("order_creation_controller.lookup_shipping_rate") as shipping, \
+             patch("order_creation_controller.calculate_total_price") as totals:
+            first = handle_final_confirmation(state)
+            snapshot = state.final_order_snapshot
+            before = state.model_dump()
+            with patch("order_creation_controller.current_utc_time") as clock:
+                again = handle_final_confirmation(state)
+                clock.assert_not_called()
+            self.assertEqual(state.model_dump(), before)
+            self.assertIs(state.final_order_snapshot, snapshot)
+            self.assertIs(state.order_snapshot, historical)
+            self.assertEqual(first, again)
+            self.assertEqual(state.pending_confirmations, ["other", "final_order_confirmed"])
+            first.data["final_order_snapshot"]["delivery_address"]["city"] = "Changed"
+            self.assertNotEqual(snapshot.delivery_address.city, "Changed")
+            shipping.assert_not_called()
+            totals.assert_not_called()
+
+    def test_matched_and_free_shipping_authorize_exact_order(self):
+        from order_creation_confirmation import ConfirmationInterpretation
+        for postcode, cost in (("3000", Decimal("1060")), ("3152", Decimal("0"))):
+            state = self.waiting(postcode)
+            snapshot = state.final_order_snapshot
+            self.assertEqual(snapshot.shipping_cost, cost)
+            with patch("order_creation_controller.lookup_shipping_rate") as shipping, \
+                 patch("order_creation_controller.calculate_total_price") as totals:
+                with self.assertRaisesRegex(NotImplementedError, "CREATE_ORDER"):
+                    execute_order_creation_workflow(state,
+                        final_confirmation=ConfirmationInterpretation(intent="CONFIRMED"),
+                        final_confirmation_snapshot=snapshot)
+                shipping.assert_not_called()
+                totals.assert_not_called()
+            self.assertTrue(state.final_order_confirmed)
+            self.assertEqual(state.current_stage, OrderCreationStage.CREATE_ORDER)
+            self.assertEqual(state.status, OrderWorkflowStatus.ACTIVE)
+            self.assertNotIn("final_order_confirmed", state.pending_confirmations)
+            self.assertIs(state.final_order_snapshot, snapshot)
+            self.assertIsNone(state.order_id)
+            self.assertIsNone(state.failure_reason)
+
+    def test_declined_ambiguous_and_change_request_stay_waiting(self):
+        from order_creation_confirmation import ConfirmationInterpretation
+        for intent in ("DECLINED", "AMBIGUOUS", "CHANGE_REQUESTED"):
+            state = self.waiting()
+            before = state.model_dump()
+            result = execute_order_creation_workflow(state,
+                final_confirmation=ConfirmationInterpretation(intent=intent),
+                final_confirmation_snapshot=state.final_order_snapshot)
+            self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
+            self.assertEqual(result.required_input, ["final_order_confirmed"])
+            self.assertEqual(result.data["confirmation_intent"], intent)
+            self.assertEqual(state.model_dump(), before)
+
+    def test_stale_and_invalid_evidence_raise_before_mutation(self):
+        from order_creation_confirmation import ConfirmationInterpretation
+        for field, value in (("phone", "123"), ("quantity", 3), ("shipping_cost", Decimal("0")),
+                             ("final_order_snapshot", None), ("final_order_snapshot", {}),
+                             ("configuration_confirmed", False), ("pending_confirmations", []),
+                             ("status", OrderWorkflowStatus.ACTIVE), ("final_order_confirmed", True)):
+            state = self.waiting()
+            evidence = state.final_order_snapshot
+            setattr(state, field, value)
+            before = state.model_copy(deep=True)
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                execute_order_creation_workflow(state,
+                    final_confirmation=ConfirmationInterpretation(intent="CONFIRMED"),
+                    final_confirmation_snapshot=evidence)
+            self.assertEqual(state, before)
+
+    def test_bad_arguments_and_clock_failure(self):
+        from order_creation_confirmation import ConfirmationInterpretation
+        from order_creation_controller import handle_final_confirmation
+        state = self.waiting()
+        intent = ConfirmationInterpretation(intent="CONFIRMED")
+        for kwargs in ({"final_confirmation": intent}, {"final_confirmation_snapshot": state.final_order_snapshot},
+                       {"confirmation": intent, "final_confirmation": intent,
+                        "final_confirmation_snapshot": state.final_order_snapshot}):
+            before = state.model_dump()
+            with self.assertRaises(ValueError):
+                execute_order_creation_workflow(state, **kwargs)
+            self.assertEqual(state.model_dump(), before)
+        before = state.model_dump()
+        with patch("order_creation_controller.current_utc_time", side_effect=RuntimeError("clock")):
+            with self.assertRaises(RuntimeError):
+                handle_final_confirmation(state, confirmation=intent, confirmation_snapshot=state.final_order_snapshot)
+        self.assertEqual(state.model_dump(), before)
 
 
 if __name__ == "__main__":
