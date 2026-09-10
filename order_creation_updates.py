@@ -10,8 +10,7 @@ from order_creation_state import OrderCreationState
 class ExtractedDeliveryAddress(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    address_line_1: str | None = None
-    address_line_2: str | None = None
+    address: str | None = None
     city: str | None = None
     state: str | None = None
     postcode: str | None = None
@@ -21,7 +20,7 @@ class ExtractedDeliveryAddress(BaseModel):
     @classmethod
     def validate_supplied_component(cls, value, info: ValidationInfo):
         # Defaults are not validated: omitted fields are not clearing requests.
-        if value is None and info.field_name != "address_line_2":
+        if value is None:
             raise ValueError("Required address components cannot be cleared.")
         if isinstance(value, str) and not value.strip():
             raise ValueError("Supplied strings must contain non-whitespace text.")

@@ -13,11 +13,11 @@ CONFIG_FIELDS = (
 )
 CUSTOMER_FIELDS = (("customer_name", "Customer name"), ("company_name", "Company"),
                    ("phone", "Phone"), ("email", "Email"))
-ADDRESS_FIELDS = (("address_line_1", "Address line 1"), ("address_line_2", "Address line 2"),
+ADDRESS_FIELDS = (("address", "Address"),
                   ("city", "City"), ("state", "State"), ("postcode", "Postcode"), ("country", "Country"))
 PRICE_FIELDS = (("customisation_price", "Customisation price"), ("unit_price", "Unit price"),
                 ("shipping_cost", "Delivery cost"), ("total_price", "Total"))
-OPTIONAL = {"company_name", "customer_instructions", "address_line_2"}
+OPTIONAL = {"company_name", "customer_instructions"}
 
 
 def _object(value):

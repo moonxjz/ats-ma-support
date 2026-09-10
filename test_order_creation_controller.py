@@ -563,14 +563,14 @@ class ConfirmationAndReentryTests(unittest.TestCase):
         updates = [{"felt_color": "Green"}, {"table_size": "9ft"}, {"room_size": "6m x 5m"},
                    {"phone": "0400123456"}, {"delivery_address": {"city": "Richmond"}},
                    {"company_name": None}, {"customer_instructions": None},
-                   {"delivery_address": {"address_line_2": None}}, {"quantity": 2},
+                   {"delivery_address": {"address": "Suite 3, 1 Example Street"}}, {"quantity": 2},
                    {"felt_color": "Green", "phone": "0400123456"}]
         for values in updates:
             with self.subTest(values=values):
                 previous = self.waiting_state()
                 previous.company_name = "Company"
                 previous.customer_instructions = "Instructions"
-                previous.delivery_address.address_line_2 = "Suite 2"
+                previous.delivery_address.address = "Suite 2, 1 Example Street"
                 previous.configuration_confirmed = True
                 previous.pending_field = "old"
                 previous.pending_system_fields = ["sku", "room_size_validation_result", "price", "room_size_validation_result"]

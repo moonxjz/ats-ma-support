@@ -42,9 +42,9 @@ class OrderInformationUpdateTests(unittest.TestCase):
 
     def test_nested_address_preserve_replace_clear_and_empty(self):
         state = complete_customer_state()
-        state.delivery_address.address_line_2 = "Suite 1"
-        for update in ({}, {"address_line_2": "Suite 2"}, {"address_line_2": None},
-                       {"postcode": "3001", "address_line_2": None}):
+        state.delivery_address.address = "Suite 1, 1 Example Street"
+        for update in ({}, {"address": "Suite 2, 1 Example Street"},
+                       {"postcode": "3001"}):
             with self.subTest(update=update):
                 result = apply_extracted_order_information(
                     state, ExtractedOrderInformation(delivery_address=update)
@@ -52,6 +52,15 @@ class OrderInformationUpdateTests(unittest.TestCase):
                 expected = state.model_dump()
                 expected["delivery_address"].update(update)
                 self.assertEqual(result.model_dump(), expected)
+
+    def test_postcode_only_preserves_all_other_address_components(self):
+        state = complete_customer_state()
+        before = state.model_dump()
+        result = apply_extracted_order_information(state,
+            ExtractedOrderInformation(delivery_address={"postcode": "3152"}))
+        self.assertEqual(result.delivery_address.model_dump(),
+                         {**before["delivery_address"], "postcode": "3152"})
+        self.assertEqual(state.model_dump(), before)
 
     def test_empty_update_preserves_quantity_and_all_values(self):
         state = complete_customer_state()
@@ -63,7 +72,7 @@ class OrderInformationUpdateTests(unittest.TestCase):
     def test_required_nulls_and_all_blank_strings_rejected(self):
         for model, optional in (
             (ExtractedOrderInformation, {"company_name", "customer_instructions"}),
-            (ExtractedDeliveryAddress, {"address_line_2"}),
+            (ExtractedDeliveryAddress, set()),
         ):
             for field in model.model_fields:
                 if field not in optional:
@@ -155,7 +164,7 @@ class OrderInformationUpdateTests(unittest.TestCase):
 
     def test_json_round_trip_preserves_omission_and_null(self):
         for values in ({}, {"company_name": None},
-                       {"delivery_address": {"address_line_2": None}},
+                       {"delivery_address": {"postcode": "3152"}},
                        {"company_name": None, "phone": "0400", "customer_instructions": None}):
             with self.subTest(values=values):
                 extracted = ExtractedOrderInformation(**values)

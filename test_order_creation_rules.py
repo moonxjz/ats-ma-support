@@ -161,7 +161,7 @@ class FinalSnapshotRulesTests(unittest.TestCase):
         for field, value in snapshot.model_dump().items():
             changed = state.model_copy(deep=True)
             if field == "delivery_address":
-                changed.delivery_address.address_line_2 = "Suite 2"
+                changed.delivery_address.address = "Suite 2, 1 Example Street"
             elif field == "room_size_validation_result":
                 changed.room_size_validation_result = "UNSUITABLE"
             elif isinstance(value, Decimal):

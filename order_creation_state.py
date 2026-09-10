@@ -28,8 +28,9 @@ class OrderWorkflowStatus(str, Enum):
 
 
 class DeliveryAddress(BaseModel):
-    address_line_1: str | None = None
-    address_line_2: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    address: str | None = None
     city: str | None = None
     state: str | None = None
     postcode: str | None = None
@@ -39,8 +40,7 @@ class DeliveryAddress(BaseModel):
 class FinalDeliveryAddress(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True, revalidate_instances="always")
 
-    address_line_1: str
-    address_line_2: str | None
+    address: str
     city: str
     state: str
     postcode: str
@@ -148,7 +148,7 @@ REQUIRED_CUSTOMER_FIELDS: tuple[str, ...] = (
     "customer_name",
     "email",
     "phone",
-    "delivery_address.address_line_1",
+    "delivery_address.address",
     "delivery_address.city",
     "delivery_address.state",
     "delivery_address.postcode",

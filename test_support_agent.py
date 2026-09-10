@@ -27,7 +27,7 @@ CONFIG = dict(product_model="Odyssey", table_size="8ft", timber="Tassie Oak",
 FINAL = {**CONFIG, "customer_name": "Demo Customer", "company_name": None,
          "phone": "0400000000", "email": "customer@example.com",
          "customer_instructions": None, "room_size": "5.2m x 4.0m",
-         "delivery_address": {"address_line_1": "1 Example Street", "address_line_2": None,
+         "delivery_address": {"address": "1 Example Street",
                               "city": "Melbourne", "state": "VIC", "postcode": "3000", "country": "Australia"},
          "customisation_price": "330", "unit_price": "7330", "shipping_cost": "0", "total_price": "7330",
          "product_sku": "INTERNAL-SKU", "room_size_validation_result": "SUITABLE"}
@@ -202,17 +202,16 @@ class RequiredInputRenderingTests(unittest.TestCase):
         with patch("support_agent._validate_response_grounding") as grounding:
             self.assertEqual(self.compose(["email", "phone"]).text,
                              "Could you please provide your email address and phone number?")
-            self.compose(["delivery_address.address_line_1"])
+            self.compose(["delivery_address.address"])
             grounding.assert_not_called()
 
     def test_captured_turn_four_address_label_regression(self):
-        self.assertEqual(self.compose(["delivery_address.address_line_1"]).text,
-                         "Could you please provide your address line 1?")
+        self.assertEqual(self.compose(["delivery_address.address"]).text,
+                         "Could you please provide your street address?")
 
     def test_synthetic_customer_writable_compatibility_fields(self):
         # These are supported writable contracts, not current Controller requests.
-        for field, label in [("delivery_address.address_line_2", "address line 2"),
-                ("company_name", "company name"), ("customer_instructions", "special instructions"),
+        for field, label in [("company_name", "company name"), ("customer_instructions", "special instructions"),
                 ("quantity", "quantity")]:
             with self.subTest(field=field):
                 self.assertEqual(self.compose([field]).text, f"Could you please provide your {label}?")
@@ -221,7 +220,7 @@ class RequiredInputRenderingTests(unittest.TestCase):
         from support_agent import REQUIRED_INPUT_LABELS
         from order_creation_state import REQUIRED_CUSTOMER_FIELDS
         self.assertEqual(set(REQUIRED_INPUT_LABELS), set(REQUIRED_CUSTOMER_FIELDS) | {
-            "delivery_address.address_line_2", "company_name", "customer_instructions", "quantity"})
+            "company_name", "customer_instructions", "quantity"})
         for field, label in REQUIRED_INPUT_LABELS.items():
             with self.subTest(field=field):
                 self.assertIn(label, self.compose([field]).text)

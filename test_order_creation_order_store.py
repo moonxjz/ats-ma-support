@@ -54,6 +54,36 @@ class OrderStoreTests(unittest.TestCase):
         self.assertIsInstance(raw[0]["order"]["shipping_cost"], str)
         self.assertEqual(OrderCreationRecord.model_validate_json(json.dumps(raw[0])).order.shipping_cost, Decimal("530"))
 
+    def test_new_address_round_trip_and_legacy_payload_rejection(self):
+        from order_creation_state import DeliveryAddress, OrderCreationState, FinalDeliveryAddress
+        from order_creation_updates import ExtractedDeliveryAddress
+        from support_agent import render_required_input_request
+        self.create()
+        original = self.read_store()
+        address = original[0]['order']['delivery_address']
+        self.assertEqual(set(address), {'address', 'city', 'state', 'postcode', 'country'})
+        self.assertEqual(address['address'], '1 Example Street')
+        self.assertEqual(self.create().record.order.delivery_address.model_dump(), address)
+        # Intentional legacy-contract rejection coverage; no aliases or conversion.
+        for old_key in ('address_line_1', 'address_line_2'):
+            with self.subTest(old_key=old_key):
+                legacy = {**address, old_key: 'Unit A'}
+                for model in (DeliveryAddress, FinalDeliveryAddress, ExtractedDeliveryAddress):
+                    with self.assertRaises(ValidationError):
+                        model.model_validate(legacy)
+                with self.assertRaises(ValidationError):
+                    OrderCreationState(conversation_id='legacy', delivery_address=legacy)
+                with self.assertRaises(ValueError):
+                    render_required_input_request(['delivery_address.' + old_key])
+                raw = json.loads(json.dumps(original))
+                raw[0]['order']['delivery_address'] = legacy
+                encoded = json.dumps(raw)
+                self.store_path.write_text(encoded)
+                with self.assertRaises(OrderStoreIntegrityError):
+                    self.create()
+                self.assertEqual(self.store_path.read_text(), encoded)
+        self.store_path.write_text(json.dumps(original))
+
     def test_sequence_uses_max_valid_id_not_record_count(self):
         first = self.create(workflow_id="WF-ONE")
         second = self.create(workflow_id="WF-TWO")

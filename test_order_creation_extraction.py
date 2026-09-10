@@ -62,7 +62,7 @@ class OrderInformationExtractionTests(unittest.TestCase):
             "phone": "0400000000",
             "email": "customer@example.com",
             "delivery_address": {
-                "address_line_1": "1 Example Street",
+                "address": "1 Example Street",
                 "city": "Melbourne",
                 "state": "VIC",
                 "postcode": "3000",
@@ -147,7 +147,7 @@ class OrderInformationExtractionTests(unittest.TestCase):
         for expected in (
             {"product_model": "Odyssey", "table_size": "7ft", "quantity": 2},
             {"company_name": None, "customer_instructions": None},
-            {"delivery_address": {"address_line_2": None, "city": "Richmond"}},
+            {"delivery_address": {"city": "Richmond"}},
             {"phone": "0400 123 456"},
         ):
             with self.subTest(expected=expected):
@@ -274,7 +274,7 @@ class LiveOrderInformationExtractionTests(unittest.TestCase):
             "phone": "0400000000",
             "email": "customer@example.com",
             "delivery_address": {
-                "address_line_1": "1 Example Street",
+                "address": "1 Example Street",
                 "city": "Melbourne",
                 "state": "VIC",
                 "postcode": "3000",

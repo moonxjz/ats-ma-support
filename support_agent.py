@@ -123,7 +123,7 @@ _BASE_CONSTRAINTS = [
 ]
 _CONFIG_FIELDS = ("product_model", "table_size", "timber", "timber_painting", "felt_color",
                   "bracket", "top_profile", "quantity")
-_ADDRESS_FIELDS = ("address_line_1", "address_line_2", "city", "state", "postcode", "country")
+_ADDRESS_FIELDS = ("address", "city", "state", "postcode", "country")
 _CUSTOMER_FIELDS = ("customer_name", "company_name", "phone", "email", "customer_instructions")
 _PRICE_FIELDS = ("customisation_price", "unit_price", "shipping_cost", "total_price")
 _INPUT_FIELDS = set(_CONFIG_FIELDS) | set(_CUSTOMER_FIELDS) | {"room_size"} | {
@@ -131,16 +131,16 @@ _INPUT_FIELDS = set(_CONFIG_FIELDS) | set(_CUSTOMER_FIELDS) | {"room_size"} | {
 }
 
 
-# Presentation only; the last four fields preserve existing writable compatibility.
+# Presentation only; the last three fields preserve existing writable compatibility.
 REQUIRED_INPUT_LABELS = {
     "customer_name": "full name", "email": "email address", "phone": "phone number",
-    "delivery_address.address_line_1": "address line 1",
+    "delivery_address.address": "street address",
     "delivery_address.city": "city", "delivery_address.state": "state",
     "delivery_address.postcode": "postcode", "delivery_address.country": "country",
     "room_size": "room size", "product_model": "table model", "table_size": "table size",
     "timber": "timber", "timber_painting": "timber finish", "felt_color": "cloth colour",
     "bracket": "bracket", "top_profile": "top profile",
-    "delivery_address.address_line_2": "address line 2", "company_name": "company name",
+    "company_name": "company name",
     "customer_instructions": "special instructions", "quantity": "quantity",
 }
 def render_required_input_request(

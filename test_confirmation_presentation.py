@@ -29,7 +29,7 @@ class RendererTests(unittest.TestCase):
         snapshot = deepcopy(FINAL)
         snapshot.update(company_name="Example Company", customer_instructions="Use side door",
                         workflow_id="secret-workflow", confirmation_intent="SECRET-INTENT")
-        snapshot['delivery_address']['address_line_2'] = 'Unit A'
+        snapshot['delivery_address']['address'] = 'Unit A, 1 Example Street'
         text = render_provisional_order(snapshot)
         for value in ("Demo Customer", "Example Company", "0400000000", "customer@example", "Use side door",
                       "1 Example Street", "Unit A", "Melbourne", "VIC", "3000", "Australia",

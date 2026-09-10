@@ -23,7 +23,7 @@ def complete_customer_state() -> OrderCreationState:
         email="customer@example.com",
         phone="0400000000",
         delivery_address=DeliveryAddress(
-            address_line_1="1 Example Street",
+            address="1 Example Street",
             city="Melbourne",
             state="VIC",
             postcode="3000",
@@ -74,7 +74,6 @@ class OrderCreationStateTests(unittest.TestCase):
         state = complete_customer_state()
         self.assertEqual(determine_missing_fields(state), [])
         self.assertIsNone(state.company_name)
-        self.assertIsNone(state.delivery_address.address_line_2)
         self.assertIsNone(state.customer_instructions)
         self.assertIsNone(state.product_sku)
         self.assertIsNone(state.total_price)
