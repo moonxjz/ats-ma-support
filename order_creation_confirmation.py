@@ -34,8 +34,9 @@ CONFIRMED: clear approval of the whole currently pending snapshot. 'Yes.',
 clearly establishes that the customer is answering that configuration request.
 DECLINED: clear rejection without a usable change, such as bare 'No.'. This is
 not order cancellation.
-CHANGE_REQUESTED: the customer wants a change, but the preceding order-data
-extraction/merge produced no effective update. Do not extract fields again.
+CHANGE_REQUESTED: the customer requests any correction or modification, with or
+without concrete replacement values. This takes precedence over approval in mixed
+messages such as "Yes, but change the quantity". Do not extract values yourself.
 AMBIGUOUS: uncertainty, questions such as 'What size did I choose again?',
 'I'm not sure', or an unclear/missing/conflicting confirmation referent.
 
@@ -63,10 +64,11 @@ CONFIRMED: explicit approval to proceed with the entire final priced order.
 only when prior conversation establishes this exact final authorization request.
 Configuration approval alone is not final purchase authorization.
 DECLINED: rejection such as bare 'No.'; not automatic cancellation.
-CHANGE_REQUESTED: a requested change without an effective extracted update.
+CHANGE_REQUESTED: any requested correction or modification, with or without
+concrete replacement values. Changes take precedence over approval in mixed replies.
 AMBIGUOUS: uncertainty, questions (including price/shipping questions), or unclear
 referents. Conditions, corrections, and 'Yes, but...' are not unqualified approval.
-Do not extract fields again. Business-data extraction and merge precede this call.
+Interpret intent before any order-data extraction or merge. Do not extract values.
 current_message is primary evidence. conversation_history contains PRIOR messages
 only, oldest first; never reinterpret historical affirmatives as current approval.
 A yes to another question or an older/different snapshot is not authorization.

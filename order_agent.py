@@ -3,13 +3,13 @@
 from copy import deepcopy
 from pathlib import Path
 
-from order_creation_confirmation import interpret_confirmation_response
+from order_creation_confirmation import ConfirmationIntent, interpret_confirmation_response
 from business_result import BusinessResult
 from order_creation_order_store import DEFAULT_ORDER_STORE_PATH
 from order_creation_controller import apply_order_creation_reentry, execute_order_creation_workflow
 from order_creation_extraction import ConversationMessage, extract_order_information
 from order_creation_state import OrderCreationStage, OrderCreationState, OrderWorkflowStatus
-from order_creation_updates import apply_extracted_order_information
+from order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
 
 
 def _execute_with_optional_store_path(updated_state: OrderCreationState, **kwargs) -> BusinessResult:
@@ -28,6 +28,8 @@ def process_order_creation_message(
 ) -> tuple[OrderCreationState, BusinessResult]:
     """Process CREATE_ORDER after classification/routing has already occurred.
 
+    Pending confirmation is interpreted first; only CHANGE_REQUESTED enters
+    extraction/merge. The Controller alone accepts evidence and progresses.
     The caller owns Wt and prior Ht; neither input is changed. On normal return,
     retain the returned independent state for the next turn. History dictionaries
     are accepted through the extractor's existing runtime validation boundary.
@@ -42,56 +44,37 @@ def process_order_creation_message(
     order_id, reaches COMPLETED, and returns SUCCESS / ORDER_CREATED. Caller-owned
     Wt remains unchanged because this function works on the validated merged copy.
     """
-    extracted = extract_order_information(
-        current_message,
-        conversation_history,
-        state,
-    )
-    updated_state = apply_extracted_order_information(
-        state,
-        extracted,
-    )
+    confirmation_stage = state.current_stage in {
+        OrderCreationStage.CONFIGURATION_CONFIRMATION, OrderCreationStage.FINAL_CONFIRMATION,
+    }
+    if confirmation_stage and state.status == OrderWorkflowStatus.AWAITING_USER_INPUT:
+        final = state.current_stage == OrderCreationStage.FINAL_CONFIRMATION
+        pending = "final_order_confirmed" if final else "configuration_confirmed"
+        stored_snapshot = state.final_order_snapshot if final else state.order_snapshot
+        already_confirmed = state.final_order_confirmed if final else state.configuration_confirmed
+        if already_confirmed or pending not in state.pending_confirmations or not stored_snapshot:
+            raise ValueError("Malformed pending-confirmation state.")
+        snapshot = deepcopy(stored_snapshot)
+        working = deepcopy(state)
+        confirmation = interpret_confirmation_response(current_message, conversation_history, working)
+        if confirmation.intent == ConfirmationIntent.CHANGE_REQUESTED:
+            extracted = extract_order_information(current_message, conversation_history, working)
+            updated = apply_extracted_order_information(working, extracted)
+            apply_order_creation_reentry(state, updated)
+            # Intent alone never establishes a change. Compare writable values;
+            # re-entry and all workflow consequences remain Controller-owned.
+            fields = set(ExtractedOrderInformation.model_fields)
+            if state.model_dump(include=fields) != updated.model_dump(include=fields):
+                result = _execute_with_optional_store_path(updated, order_store_path=order_store_path)
+                return updated, result
+            working = updated
+        evidence = ({"final_confirmation": confirmation, "final_confirmation_snapshot": snapshot}
+                    if final else {"confirmation": confirmation, "confirmation_snapshot": snapshot})
+        result = _execute_with_optional_store_path(working, order_store_path=order_store_path, **evidence)
+        return working, result
+
+    extracted = extract_order_information(current_message, conversation_history, state)
+    updated_state = apply_extracted_order_information(state, extracted)
     apply_order_creation_reentry(state, updated_state)
-    # Only a previously pending turn may interpret a response. Re-entry has
-    # already moved effective changes away from confirmation. Use current Wt.
-    if (
-        state.current_stage == OrderCreationStage.CONFIGURATION_CONFIRMATION
-        and state.status == OrderWorkflowStatus.AWAITING_USER_INPUT
-        and not state.configuration_confirmed
-        and "configuration_confirmed" in state.pending_confirmations
-        and state.order_snapshot
-        and updated_state.current_stage == OrderCreationStage.CONFIGURATION_CONFIRMATION
-        and updated_state.status == OrderWorkflowStatus.AWAITING_USER_INPUT
-        and not updated_state.configuration_confirmed
-        and "configuration_confirmed" in updated_state.pending_confirmations
-        and updated_state.order_snapshot
-    ):
-        snapshot = deepcopy(updated_state.order_snapshot)
-        confirmation = interpret_confirmation_response(
-            current_message, conversation_history, updated_state,
-        )
-        result = execute_order_creation_workflow(
-            updated_state, confirmation=confirmation, confirmation_snapshot=snapshot,
-        )
-    elif (
-        state.current_stage == OrderCreationStage.FINAL_CONFIRMATION
-        and state.status == OrderWorkflowStatus.AWAITING_USER_INPUT
-        and not state.final_order_confirmed
-        and "final_order_confirmed" in state.pending_confirmations
-        and state.final_order_snapshot is not None
-        and updated_state.current_stage == OrderCreationStage.FINAL_CONFIRMATION
-        and updated_state.status == OrderWorkflowStatus.AWAITING_USER_INPUT
-        and not updated_state.final_order_confirmed
-        and "final_order_confirmed" in updated_state.pending_confirmations
-        and updated_state.final_order_snapshot is not None
-    ):
-        snapshot = deepcopy(updated_state.final_order_snapshot)
-        confirmation = interpret_confirmation_response(current_message, conversation_history, updated_state)
-        result = _execute_with_optional_store_path(
-            updated_state, final_confirmation=confirmation,
-            final_confirmation_snapshot=snapshot,
-            order_store_path=order_store_path,
-        )
-    else:
-        result = _execute_with_optional_store_path(updated_state, order_store_path=order_store_path)
+    result = _execute_with_optional_store_path(updated_state, order_store_path=order_store_path)
     return updated_state, result

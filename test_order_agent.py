@@ -222,6 +222,7 @@ class OrderAgentTests(unittest.TestCase):
             self.assertEqual(state.model_dump(), before)
 
     def test_next_turn_correction_cannot_bypass_collection_and_validation(self):
+        self.interpret.return_value = ConfirmationInterpretation(intent="CHANGE_REQUESTED")
         from order_creation_controller import handle_collect_requirements, handle_validate_configuration
         state, _ = process_order_creation_message("Initial", [], complete_customer_state())
         before = state.model_dump()
@@ -286,22 +287,23 @@ class OrderAgentTests(unittest.TestCase):
              patch("order_agent.apply_order_creation_reentry", side_effect=reentry), \
              patch("order_agent.execute_order_creation_workflow", side_effect=execute):
             updated, result = process_order_creation_message("No", self.history, state)
-        self.assertEqual(order, ["extract", "merge", "reentry", "interpret", "execute"])
+        self.assertEqual(order, ["interpret", "execute"])
         self.assertIs(updated, working_states[0])
         self.assertIs(result, results[0])
         self.assertEqual(result.data["confirmation_intent"], "DECLINED")
         self.assertEqual(state.model_dump(), before)
         self.assertEqual(self.history, history_before)
 
-    def test_first_arrival_and_effective_corrections_skip_interpretation(self):
+    def test_first_arrival_skips_but_corrections_require_interpretation(self):
         state, _ = process_order_creation_message("Initial order", [], complete_customer_state())
         self.interpret.assert_not_called()
+        self.interpret.return_value = ConfirmationInterpretation(intent="CHANGE_REQUESTED")
         for values in ({"felt_color":"Green"}, {"table_size":"7ft"},
                        {"room_size":"6m x 5m"}, {"phone":"0400123456"}):
             with self.subTest(values=values):
                 self.extract.return_value = ExtractedOrderInformation(**values)
                 process_order_creation_message("No, change it", [], state)
-                self.interpret.assert_not_called()
+                self.interpret.assert_called()
 
     def test_same_value_confirmation_prices_and_preserves_inputs(self):
         state = complete_customer_state()
@@ -335,14 +337,15 @@ class OrderAgentTests(unittest.TestCase):
                 process_order_creation_message("Yes", [], state)
             self.assertIs(caught.exception, error)
             execute.assert_not_called()
-        self.interpret.reset_mock()
+        self.interpret.reset_mock(side_effect=True)
+        self.interpret.return_value = ConfirmationInterpretation(intent="CHANGE_REQUESTED")
         reentry_error = RuntimeError("Reentry failed")
         with patch("order_agent.apply_order_creation_reentry", side_effect=reentry_error), \
              patch("order_agent.execute_order_creation_workflow") as execute:
             with self.assertRaises(RuntimeError) as caught:
                 process_order_creation_message("Yes", [], state)
             self.assertIs(caught.exception, reentry_error)
-            self.interpret.assert_not_called()
+            self.interpret.assert_called_once()
             execute.assert_not_called()
 
 
@@ -350,6 +353,17 @@ class OrderAgentTests(unittest.TestCase):
 class FinalOrderAgentTests(unittest.TestCase):
     def setUp(self):
         from test_order_creation_confirmation import final_waiting_state
+        self.store_dir = TemporaryDirectory()
+        self.addCleanup(self.store_dir.cleanup)
+        import order_agent
+        original = order_agent._execute_with_optional_store_path
+        def isolated(state, **kwargs):
+            if kwargs['order_store_path'] == order_agent.DEFAULT_ORDER_STORE_PATH:
+                kwargs['order_store_path'] = Path(self.store_dir.name) / "orders.json"
+            return original(state, **kwargs)
+        store_patch = patch("order_agent._execute_with_optional_store_path", side_effect=isolated)
+        store_patch.start()
+        self.addCleanup(store_patch.stop)
         self.state = final_waiting_state()
         self.history = [{"role": "assistant", "content": "Please authorize this exact final order."}]
         self.ep = patch("order_agent.extract_order_information", return_value=ExtractedOrderInformation())
@@ -357,6 +371,55 @@ class FinalOrderAgentTests(unittest.TestCase):
         self.extract, self.interpret = self.ep.start(), self.ip.start()
         self.addCleanup(self.ep.stop)
         self.addCleanup(self.ip.stop)
+
+    def test_confirmation_first_approval_decline_ambiguity_both_stages(self):
+        from test_order_creation_confirmation import waiting_state, final_waiting_state
+        for factory in (waiting_state, final_waiting_state):
+            for intent in ("CONFIRMED", "DECLINED", "AMBIGUOUS"):
+                state = factory()
+                before = deepcopy(state)
+                self.extract.reset_mock()
+                self.extract.return_value = ExtractedOrderInformation(quantity=2)
+                self.interpret.return_value = ConfirmationInterpretation(intent=intent)
+                with patch("order_agent.apply_extracted_order_information") as merge, \
+                     patch("order_agent.apply_order_creation_reentry") as reentry, \
+                     patch("order_agent.execute_order_creation_workflow", return_value=object()) as execute:
+                    updated, result = process_order_creation_message(
+                        "Yes, I confirm the final order and would like to place it.", self.history, state)
+                self.extract.assert_not_called()
+                merge.assert_not_called()
+                reentry.assert_not_called()
+                self.assertEqual(updated, before)
+                self.assertIsNot(updated, state)
+                final = state.current_stage == OrderCreationStage.FINAL_CONFIRMATION
+                evidence = execute.call_args.kwargs['final_confirmation_snapshot' if final else 'confirmation_snapshot']
+                snapshot = state.final_order_snapshot if final else state.order_snapshot
+                self.assertEqual(evidence, snapshot)
+                self.assertIsNot(evidence, snapshot)
+                self.assertEqual(state, before)
+
+    def test_change_intent_without_effective_update_preserves_evidence(self):
+        from test_order_creation_confirmation import waiting_state, final_waiting_state
+        for factory in (waiting_state, final_waiting_state):
+            for values in ({}, {"quantity": 1}):
+                state = factory()
+                before = deepcopy(state)
+                self.extract.return_value = ExtractedOrderInformation(**values)
+                self.interpret.return_value = ConfirmationInterpretation(intent="CHANGE_REQUESTED")
+                updated, result = process_order_creation_message("Change it", self.history, state)
+                self.assertEqual(updated.quantity, 1)
+                self.assertEqual(updated.current_stage, state.current_stage)
+                self.assertEqual(result.data['confirmation_intent'], 'CHANGE_REQUESTED')
+                self.assertEqual(state, before)
+
+    def test_malformed_pending_state_stops_before_language_calls(self):
+        for field, value in (("final_order_snapshot", None), ("pending_confirmations", []), ("final_order_confirmed", True)):
+            state = deepcopy(self.state)
+            setattr(state, field, value)
+            with self.assertRaisesRegex(ValueError, 'Malformed'):
+                process_order_creation_message("Yes", self.history, state)
+        self.extract.assert_not_called()
+        self.interpret.assert_not_called()
 
     def test_correction_first_and_fresh_affirmative(self):
         for message, values, stage in (
@@ -368,10 +431,11 @@ class FinalOrderAgentTests(unittest.TestCase):
         ):
             with self.subTest(values=values):
                 self.interpret.reset_mock()
+                self.interpret.return_value = ConfirmationInterpretation(intent="CHANGE_REQUESTED")
                 self.extract.return_value = ExtractedOrderInformation(**values)
                 before, history = self.state.model_dump(), deepcopy(self.history)
                 updated, result = process_order_creation_message(message, self.history, self.state)
-                self.interpret.assert_not_called()
+                self.interpret.assert_called()
                 self.assertEqual(updated.current_stage, stage)
                 self.assertFalse(updated.final_order_confirmed)
                 self.assertEqual(self.state.model_dump(), before)
@@ -380,6 +444,7 @@ class FinalOrderAgentTests(unittest.TestCase):
                     self.assertNotEqual(updated.final_order_snapshot, self.state.final_order_snapshot)
                     self.assertEqual(result.reason, BusinessResultReason.FINAL_CONFIRMATION_REQUIRED)
                     self.extract.return_value = ExtractedOrderInformation()
+                    self.interpret.return_value = ConfirmationInterpretation(intent="CONFIRMED")
                     with TemporaryDirectory() as tmp:
                         completed, success = process_order_creation_message(
                             "Yes, proceed", self.history, updated,
