@@ -12,6 +12,15 @@ from order_creation_catalog import (
 
 
 class CatalogTests(unittest.TestCase):
+    def test_source_skus_are_nonblank_without_surrounding_whitespace(self):
+        records = json.loads(CATALOG_PATH.read_text())["records"]
+        for index, record in enumerate(records):
+            with self.subTest(index=index, title=record["title"]):
+                sku = record["sku"]
+                self.assertIsInstance(sku, str)
+                self.assertTrue(sku.strip(), "SKU must be nonblank")
+                self.assertEqual(sku, sku.strip(), "SKU contains surrounding whitespace")
+
     def test_source_records_and_explicit_mappings(self):
         records = json.loads(CATALOG_PATH.read_text())["records"]
         self.assertEqual(len(records), 87)
@@ -26,8 +35,8 @@ class CatalogTests(unittest.TestCase):
         homestead = lookup_base_product("Homestead", "7ft")["record"]
         self.assertEqual(homestead["title"], "Homestead7ft")
         self.assertEqual(homestead["sku"], "B7HOMESTEAD")
-        self.assertEqual(lookup_base_product("Saga", "7ft")["record"]["sku"], "\tB7SAGA")
-        self.assertEqual(lookup_base_product("Cyber", "8ft")["record"]["sku"], "\tB8CYBERIN")
+        self.assertEqual(lookup_base_product("Saga", "7ft")["record"]["sku"], "B7SAGA")
+        self.assertEqual(lookup_base_product("Cyber", "8ft")["record"]["sku"], "B8CYBERIN")
         timber = list_product_options("Timber")
         self.assertEqual([r["title"] for r in timber if r["sku"] == "TTAOAK"], ["Tassie Oak", "American Oak"])
 
@@ -105,7 +114,7 @@ class ProductPricingTests(unittest.TestCase):
         self.assertEqual(result["unit_price"], Decimal("6800"))
         self.assertEqual(self.values, before)
         self.values.update(product_model="Saga", table_size="7ft")
-        self.assertEqual(lookup_product_pricing(**self.values)["product_sku"], "\tB7SAGA")
+        self.assertEqual(lookup_product_pricing(**self.values)["product_sku"], "B7SAGA")
 
     def test_noncanonical_and_unresolvable_inputs_are_not_corrected(self):
         for field in self.values:
