@@ -550,3 +550,141 @@ compatibility and the grounding limitation. It does not run full conversations.
 CS1-C adds only the provider and its tests plus this documentation. No Support,
 Root, Classifier, runtime, Order Agent, Controller, CS1-A/CS1-B or catalog changes
 are required. CS1-D and real experiment execution remain outside this stage.
+
+## CS1-D experiment runner
+
+`experiment_runner.py` adds sequential orchestration and separate, minimal pilot
+consistency validation. CS1-D implementation has deterministic mocked tests only.
+Live qwen/Ollama execution requires separate approval. There is no automatic CLI
+or batch execution entry point. After future approval, run S01, S02, then S03
+individually, stopping at the first failure and preserving its evidence.
+
+`prepare_pilot()` validates S01/S02/S03 and loads one shared static knowledge
+snapshot. `run_scenario(scenario, run_directory=..., knowledge=...,
+execution_factory=...)` returns raw `ExperimentRunResult`. Omitting the execution
+factory selects the existing A3 runtime and **can invoke live models**. Tests
+always inject scripted execution. Post-run validation is a separate call:
+`validate_pilot_result(result, customer=scenario.customer_view(),
+expectations=scenario.evaluation)`. It does not execute the system or repair data.
+
+### Contracts and public turn loop
+
+All runner contracts forbid extra fields and coercion and use frozen models and
+tuple collections. Mutable ATS objects are captured immediately as JSON strings.
+
+| Contract | Contents |
+| --- | --- |
+| `PublicRunRecord` | Run identity and completed alternating user/assistant pairs only |
+| `ExperimentRunResult` | Identity, termination, attempted/dispatched ledgers, completed/call counts, public record, final simulator state, committed session snapshot, persistence and business observations, traces, timing and output references |
+| `TurnTrace` | Proposed action/state, exact customer text, dispatch/completion flags, supplied knowledge, session snapshots, returned runtime snapshot, actual response, persistence before/after, durations and technical failure |
+| `PublicStop` / `TechnicalTermination` | CS1-B public stop decision or runner/runtime failure |
+| `PersistenceObservation` | ABSENT, VALID, MALFORMED or UNREADABLE; validated record snapshots/count where known, raw readable data and error |
+| `BusinessTerminalObservation` | Observed workflow/result status and reason, sourced from committed session, pending execution or explicitly unavailable |
+| `PilotValidationResult` / `PilotCheck` | Separate PASS/FAIL/INCONCLUSIVE verdict; named PASS/FAIL/UNKNOWN checks and evidence-reference slots |
+
+For each step the simulator receives exactly the customer projection, its state
+and prior completed public history. The exact proposed customer message enters
+the attempted ledger. CS1-C then receives only that message, completed public
+history and static knowledge, before runtime classification. Knowledge is passed
+through `support_knowledge`; it neither selects nor overrides the runtime route.
+An Order route may leave it unused.
+
+Only at dispatch does the runner adopt the proposed simulator state and append
+the message to the dispatched ledger. It calls runtime exactly once, using a
+copy of the last committed session. On success it requires the returned session
+to have the same conversation identity and exactly one additional pair containing
+the dispatched text and actual `CustomerResponse.text`. The independently held
+public transcript must equal the committed session's public projection exactly.
+Only then is the returned session adopted and the pair recorded as completed.
+
+A provider failure leaves the proposed simulator state unadopted. A runtime
+failure retains the dispatch and proposed state but contributes no public pair.
+No retry, resubmission, synthetic response or further simulator step follows.
+Repeated identical approvals remain valid CS1-B actions. S03 classification and
+pending discovery remain untouched: the enquiry-first trajectory can proceed;
+an order-first trajectory that loses the enquiry may end at a public dead-end.
+Introductory prose, unsupported bullets and generated nonnumeric option errors
+remain diagnostic public evidence under the existing CS1-B/CS1-C limitations.
+
+### Evidence, isolation and failures
+
+Each run exclusively creates a new directory. Its `orders.json` is bound through
+the existing `process_order_creation_message(..., order_store_path=...)` injection
+inside the A3 runtime assembly. The default `data/orders.json` is rejected. No
+directory is cleared or reused; failed-run stores remain available. Directory
+creation/reuse errors propagate before execution, as do `prepare_pilot()` errors.
+Injected factories receive this same isolated store path and must honor it.
+
+The directory contains `manifest.json`, public-only `public_history.json`, private
+`trace.jsonl`, private `result.json`, and `orders.json` if an order was written.
+The manifest records scenario/fixture provenance, architecture label, the CS1-B
+64-message development safeguard and existing model-setting declarations. It is
+not a measurement of the installed model revision or effective sampling settings.
+`result.json` references the JSONL trace instead of duplicating its turn entries;
+the returned in-memory result includes all traces. JSONL also has a terminal event.
+
+Technical phases are SETUP, PROVIDER, RUNTIME, SIMULATOR, RUNNER_INTEGRITY and
+OUTPUT. Public stop reasons remain CS1-B's own reasons, including publicly
+reported creation, content mismatch, denied target, uninterpretable response and
+runaway safeguard. Workflow completion and persisted records are separate
+observations; public creation wording is never persistence proof.
+
+`TurnFailure` captures its phase, exception/cause and serialized `PendingTurn`
+when present. The last committed session remains intact. Store observations
+before/after the failed dispatch expose writes that preceded failed response
+composition; pending business state is explicitly distinguished from committed
+state. No `retry_pending_response` call occurs. Secondary output failures retain
+the earlier termination and independently fail pilot validation. A disk failure
+can leave incomplete/stale files; the returned result retains available evidence
+and output errors without retrying the conversation.
+
+Runtime snapshots contain exposed classification, routing, execution status,
+BusinessResult, Support result and workflow state. Internal controller transitions,
+confirmation interpretation, rejected raw model output and token counts are
+explicitly unavailable, never reconstructed as observed events. Nothing in this
+private trace is supplied to the simulator or knowledge provider.
+
+### Minimal post-run validation and execution boundary
+
+Pilot checks compare technical/public termination, completed workflow/business
+outcome, exactly one independently persisted order, customer truth, stored SKU and
+four stored price fields, duplicate records, completed public pairs, configuration
+and final-order approval receipts, and the persisted payload against the public
+artifact approved on the dispatch before the record first appeared. Base-model
+price is not independently stored. Missing artifact association or unavailable
+business/store evidence produces UNKNOWN; any failed check yields FAIL, otherwise
+any UNKNOWN yields INCONCLUSIVE, otherwise PASS.
+
+Scenario checks cover S01 absence of discovery, S02/S03 required observed target
+offers and selections, and declared interaction expectations: preserved direct
+choices, target observation before selection, actual active-workflow enquiries
+and subsequent workflow continuity. These are pilot consistency checks. They do
+not read or score `ScenarioSpec.evaluation.invariants`, I1–I8, aggregate paper
+metrics or unexposed internal safety events. Evaluation expectations are used only
+in this post-run function, outside customer/provider/ATS decision inputs.
+
+The execution factory accepts the store path and returns a callable with the
+current runtime turn signature. This keeps execution assembly outside the customer
+loop; architecture labels do not change customer behavior. A1/A2 are not
+implemented. The current `ConversationSession.workflow_state` still requires
+`OrderCreationState`, and returned results require `TurnResult`: a future adapter
+must satisfy these contracts or receive approval for a separate contract change.
+This is an injection boundary, not a claim of complete architecture neutrality.
+
+Timing uses wall-clock elapsed seconds for the run through final observation
+(excluding final result/public-file serialization), each provider/runtime call,
+and their totals. Counts distinguish attempts, dispatches, completed turns,
+provider calls and runtime calls. These are development observations only; there
+is no token accounting or paper-grade efficiency measurement.
+
+`test_experiment_runner.py` exercises scripted S01/S02/S03 trajectories, both S03
+initial routes, information boundaries, state/history semantics, isolation,
+failure/pending-write retention, output failures, serialization, unchanged parser
+limitations and all three pilot verdicts. Scripted runtime fixtures supply public
+responses and persistence evidence; these tests do not establish real A3 pilot
+success. Existing CS1-A/B/C and mocked Support/Root/runtime regressions are run
+alongside them. All production code and shared business fixtures remain unchanged.
+
+Implementation validation: 144 deterministic tests passed (23 CS1-D, 10 CS1-A,
+53 CS1-B/parser, 20 CS1-C and 38 mocked Support/Root/runtime regressions). No live
+model calls or real S01/S02/S03 pilots were run.
