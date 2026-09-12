@@ -637,6 +637,7 @@ class CS2RunnerTests(unittest.TestCase):
     def test_summary_and_fingerprint(self):
         result, _, chat = self.run_cs2()
         summary = result.simulator_summary
+        self.assertEqual(summary.diagnostics_completeness, 'COMPLETE')
         self.assertEqual(summary.attempt_count, len(result.simulator_attempts))
         self.assertEqual(summary.model_call_count, chat.call_count)
         self.assertAlmostEqual(summary.elapsed, sum(a.elapsed for a in result.simulator_attempts))
@@ -656,7 +657,7 @@ class CS2RunnerTests(unittest.TestCase):
         self.assertEqual(manifest['simulator']['provenance'], 'MOCK')
         self.assertIsNone(manifest['simulator']['model_digest'])
         self.assertIsNone(manifest['simulator']['source_commit'])
-        self.assertEqual(manifest['simulator']['trace_schema_version'], 'CS2-1')
+        self.assertEqual(manifest['simulator']['trace_schema_version'], 'CS2-2')
         with self.assertRaises(ValueError):
             make_simulator_metadata(provenance='MOCK', model_digest='invented')
         with self.assertRaises(ValueError):
@@ -713,6 +714,155 @@ class CS2RunnerTests(unittest.TestCase):
         self.assertEqual(result.simulator_attempts[-1].failure.message, 'PRIVATE_RAW_MARKER')
         self.assertEqual(len(script.calls), 1)
         self.assertNotIn('PRIVATE_RAW_MARKER', Path(result.outputs.result).read_text())
+
+    def recording_boundary(self, diagnostics, error=None, write_failure=False):
+        simulator = Mock(side_effect=error if error is not None else step)
+        provider, runtime = Mock(), Mock()
+        from evaluation.experiment_runner import _append_event
+        def write(path, event):
+            if write_failure and event.kind == 'SIMULATOR_ATTEMPT_RECORDING_FAILURE':
+                raise OSError('PRIVATE_WRITE')
+            return _append_event(path, event)
+        with patch('evaluation.experiment_runner._append_event', side_effect=write):
+            result = run_scenario(self.scenarios[0], run_directory=self.root/'boundary',
+                knowledge=self.knowledge, simulator=simulator, simulator_metadata=self.metadata,
+                simulator_diagnostics=diagnostics, knowledge_provider=provider,
+                execution_factory=lambda store: runtime)
+        simulator.assert_called_once()
+        diagnostics.assert_called_once()
+        provider.assert_not_called()
+        runtime.assert_not_called()
+        self.assertEqual(result.provider_calls, 0)
+        self.assertEqual(result.runtime_calls, 0)
+        self.assertEqual(result.final_customer_simulator_state, CustomerSimulatorState())
+        self.assertEqual(result.public_record.public_history, ())
+        self.assertEqual(result.attempted_customer_messages, ())
+        self.assertEqual(result.simulator_attempts, ())
+        self.assertEqual(len(result.simulator_recording_failures), 1)
+        event = result.simulator_recording_failures[0]
+        self.assertEqual(event.attempt_index, 0)
+        self.assertEqual(event.input_history_length, 0)
+        self.assertGreaterEqual(event.elapsed, 0)
+        summary = result.simulator_summary
+        self.assertEqual(summary.attempt_count, 1)
+        self.assertEqual(summary.diagnostics_completeness, 'INCOMPLETE')
+        self.assertIsNone(summary.model_call_count)
+        self.assertIsNone(summary.model_elapsed)
+        self.assertEqual(summary.elapsed, event.elapsed)
+        saved = Path(result.outputs.result).read_text()
+        self.assertNotIn('PRIVATE', saved)
+        self.assertNotIn('simulator_recording_failures', json.loads(saved))
+        if not write_failure:
+            from pydantic import TypeAdapter
+            from evaluation.experiment_runner import TraceEvent
+            self.assertEqual(TypeAdapter(TraceEvent).validate_python(self.events(result)[0]), event)
+            self.assertEqual(self.events(result)[-1]['simulator_attempt_index'], 0)
+        return result, event
+
+    def test_diagnostics_retrieval_failure(self):
+        result, event = self.recording_boundary(Mock(side_effect=RuntimeError('PRIVATE_DIAGNOSTICS')))
+        self.assertEqual(result.termination.failure.phase, 'RUNNER_INTEGRITY')
+        self.assertEqual(event.invocation_outcome, 'RETURNED')
+        self.assertEqual(event.returned_decision_kind, 'CUSTOMER_TURN')
+        self.assertEqual(event.rendered_customer_message, self.scenarios[0].customer.initial_message)
+        self.assertEqual(event.recording_stage, 'RETRIEVAL')
+        self.assertIsNone(event.validated_diagnostics)
+        self.assertIsNone(event.simulator_failure)
+        self.assertFalse(result.secondary_failures)
+
+    def test_malformed_diagnostics_no_invented_fields(self):
+        result, event = self.recording_boundary(Mock(return_value={'model_calls': 'PRIVATE_BAD'}))
+        self.assertEqual(result.termination.failure.phase, 'RUNNER_INTEGRITY')
+        self.assertEqual(event.recording_stage, 'VALIDATION')
+        self.assertIsNone(event.validated_diagnostics)
+        for name in ('model_calls', 'model_elapsed', 'raw_model_content', 'parsed_proposal_json', 'guard_outcome'):
+            self.assertNotIn(name, event.model_dump())
+
+    def test_cs2_failure_and_unavailable_diagnostics(self):
+        result, event = self.recording_boundary(Mock(side_effect=ValueError('PRIVATE_DIAGNOSTICS')),
+            error=cs2.CS2Failure('GUARD_REJECTED', 'PRIVATE_PROPOSAL'))
+        self.assertEqual(result.termination.failure.phase, 'SIMULATOR')
+        self.assertEqual(result.termination.failure.exception_type, 'CS2Failure')
+        self.assertEqual(event.simulator_failure.code, 'GUARD_REJECTED')
+        self.assertEqual(event.invocation_outcome, 'RAISED')
+        self.assertIsNone(event.returned_decision_kind)
+        self.assertEqual(result.secondary_failures, (event.recording_failure,))
+        self.assertEqual(result.simulator_summary.failure_code, 'GUARD_REJECTED')
+
+    def test_unexpected_failure_and_unavailable_diagnostics(self):
+        result, event = self.recording_boundary(Mock(side_effect=ValueError('PRIVATE_DIAGNOSTICS')),
+            error=RuntimeError('PRIVATE_SIMULATOR'))
+        self.assertEqual(result.termination.failure.phase, 'SIMULATOR')
+        self.assertEqual(result.termination.failure.exception_type, 'RuntimeError')
+        self.assertEqual(event.simulator_failure.code, 'UNEXPECTED_EXCEPTION')
+        self.assertEqual(result.secondary_failures, (event.recording_failure,))
+
+    def test_recording_failure_event_write_failure_retained(self):
+        result, event = self.recording_boundary(Mock(side_effect=ValueError('PRIVATE_DIAGNOSTICS')),
+            error=cs2.CS2Failure('MODEL_FAILURE', 'PRIVATE_MODEL'), write_failure=True)
+        self.assertEqual(result.termination.failure.phase, 'SIMULATOR')
+        self.assertEqual([e.phase for e in result.secondary_failures], ['RUNNER_INTEGRITY', 'OUTPUT'])
+
+    def test_validated_diagnostics_retained_if_attempt_invalid(self):
+        result, event = self.recording_boundary(Mock(return_value={
+            'guard_outcome': 'ACCEPTED', 'model_calls': 1, 'model_elapsed': None,
+            'raw_model_content': 'PRIVATE_RAW', 'parsed_proposal_json': '{}'}))
+        self.assertEqual(event.recording_stage, 'ATTEMPT_CONSTRUCTION')
+        self.assertEqual(event.validated_diagnostics.raw_model_content, 'PRIVATE_RAW')
+        self.assertEqual(result.termination.failure.phase, 'RUNNER_INTEGRITY')
+
+    def test_later_diagnostics_failure_retains_prior_state_and_known_attempt(self):
+        simulator = make_llm_simulator(chat_fn=Mock(side_effect=proposed_reply))
+        diagnostics = Mock()
+        def retrieve():
+            if diagnostics.call_count == 1:
+                return simulator.take_diagnostics()
+            raise ValueError('unavailable')
+        diagnostics.side_effect = retrieve
+        script = ScriptedExecution(self.scenarios[0], happy_events(self.scenarios[0]))
+        result = run_scenario(self.scenarios[0], run_directory=self.root/'later', knowledge=self.knowledge,
+            simulator=simulator, simulator_metadata=self.metadata, simulator_diagnostics=diagnostics,
+            execution_factory=script.factory)
+        self.assertEqual(diagnostics.call_count, 2)
+        self.assertEqual(result.runtime_calls, 1)
+        self.assertEqual(result.provider_calls, 1)
+        self.assertEqual(result.final_customer_simulator_state, result.traces[0].proposed_customer_state)
+        self.assertEqual(len(result.public_record.public_history), 2)
+        self.assertEqual(len(result.simulator_attempts), 1)
+        self.assertEqual(result.simulator_recording_failures[0].attempt_index, 1)
+        self.assertEqual(result.simulator_summary.attempt_count, 2)
+        self.assertIsNone(result.simulator_summary.model_call_count)
+
+    def test_public_stop_diagnostics_failure_does_not_adopt_stop(self):
+        simulator = make_llm_simulator(chat_fn=Mock(side_effect=proposed_reply))
+        last = []
+        def invoke(inputs):
+            proposal = simulator(inputs)
+            last[:] = [proposal]
+            return proposal
+        def retrieve():
+            if isinstance(last[0].decision, cs2.StopDecision):
+                raise ValueError('stop diagnostics unavailable')
+            return simulator.take_diagnostics()
+        script = ScriptedExecution(self.scenarios[0], happy_events(self.scenarios[0]))
+        result = run_scenario(self.scenarios[0], run_directory=self.root/'stop', knowledge=self.knowledge,
+            simulator=invoke, simulator_metadata=self.metadata, simulator_diagnostics=retrieve,
+            execution_factory=script.factory)
+        event = result.simulator_recording_failures[0]
+        self.assertEqual(event.returned_decision_kind, 'PUBLIC_STOP')
+        self.assertIsNone(event.rendered_customer_message)
+        self.assertIsNone(event.validated_diagnostics)
+        self.assertEqual(result.termination.failure.phase, 'RUNNER_INTEGRITY')
+        self.assertEqual(result.final_customer_simulator_state, result.traces[-1].proposed_customer_state)
+        self.assertIsNone(result.final_customer_simulator_state.stop_decision)
+        self.assertEqual(result.runtime_calls, len(result.traces))
+        self.assertEqual(result.provider_calls, len(result.traces))
+
+    def test_success_recording_failure_event_write_failure(self):
+        result, event = self.recording_boundary(Mock(side_effect=ValueError('PRIVATE_DIAGNOSTICS')),
+            write_failure=True)
+        self.assertEqual(result.termination.failure.phase, 'RUNNER_INTEGRITY')
+        self.assertEqual([e.phase for e in result.secondary_failures], ['OUTPUT'])
 
     def test_cs2_requires_verifier(self):
         result, _, _ = self.run_cs2()

@@ -29,6 +29,7 @@ from evaluation.static_product_knowledge import (
     StaticProductKnowledge, load_static_product_knowledge, provide_support_knowledge,
 )
 
+from evaluation.llm_customer_simulator import CS2Failure
 from evaluation.llm_simulator_integration import (
     SimulatorMetadata, SimulatorDiagnostics, SimulatorAttemptTrace, SimulatorSummary,
     SimulatorFailure, PublicApprovalAudit, summarize_attempts,
@@ -125,6 +126,21 @@ class SimulatorAttemptEvent(PublicContract):
     attempt: SimulatorAttemptTrace
 
 
+class SimulatorAttemptRecordingFailureEvent(PublicContract):
+    kind: Literal['SIMULATOR_ATTEMPT_RECORDING_FAILURE'] = 'SIMULATOR_ATTEMPT_RECORDING_FAILURE'
+    attempt_index: Count
+    input_history_length: Count
+    elapsed: Duration
+    invocation_outcome: Literal['RETURNED', 'RAISED']
+    returned_decision_kind: Literal['CUSTOMER_TURN', 'PUBLIC_STOP'] | None = None
+    rendered_customer_message: Nonblank | None = None
+    simulator_failure: SimulatorFailure | None = None
+    recording_stage: Literal['RETRIEVAL', 'VALIDATION', 'ATTEMPT_CONSTRUCTION']
+    recording_failure: TechnicalFailure
+    # Only a successfully validated snapshot, never a reconstruction or malformed object.
+    validated_diagnostics: SimulatorDiagnostics | None = None
+
+
 class RuntimeTurnEvent(PublicContract):
     kind: Literal['RUNTIME_TURN'] = 'RUNTIME_TURN'
     simulator_attempt_index: Count
@@ -137,7 +153,7 @@ class TerminationEvent(PublicContract):
     simulator_attempt_index: Count | None = None
 
 
-TraceEvent = Annotated[SimulatorAttemptEvent | RuntimeTurnEvent | TerminationEvent, Field(discriminator='kind')]
+TraceEvent = Annotated[SimulatorAttemptEvent | SimulatorAttemptRecordingFailureEvent | RuntimeTurnEvent | TerminationEvent, Field(discriminator='kind')]
 
 
 class RunTiming(PublicContract):
@@ -176,6 +192,8 @@ class ExperimentRunResult(PublicContract):
     secondary_failures: tuple[TechnicalFailure, ...] = ()
     simulator_summary: SimulatorSummary | None = Field(default=None, exclude_if=lambda value: value is None)
     simulator_attempts: tuple[SimulatorAttemptTrace, ...] = Field(default=(), exclude=True)
+
+    simulator_recording_failures: tuple[SimulatorAttemptRecordingFailureEvent, ...] = Field(default=(), exclude=True)
 
     @model_validator(mode='after')
     def consistent_counts(self) -> Self:
@@ -340,6 +358,7 @@ def run_scenario(
     if recording:
         simulator_metadata = SimulatorMetadata.model_validate(simulator_metadata)
     simulator_attempts = []
+    simulator_recording_failures = []
     directory = Path(run_directory).resolve()
     store = directory / 'orders.json'
     if store.resolve() == DEFAULT_ORDER_STORE_PATH.resolve():
@@ -388,28 +407,67 @@ def run_scenario(
             if recording:
                 simulator_error = None
                 proposal = None
+                returned = False
                 start = perf_counter()
                 try:
-                    proposal = SimulatorStep.model_validate(simulator(inputs))
+                    returned_value = simulator(inputs)
+                    returned = True
+                    proposal = SimulatorStep.model_validate(returned_value)
                 except Exception as exc:
                     simulator_error = exc
                 elapsed = perf_counter() - start
                 phase = 'RUNNER_INTEGRITY'
-                diagnostics = SimulatorDiagnostics.model_validate(simulator_diagnostics())
-                if simulator_error is not None and diagnostics.failure is None:
-                    diagnostics = SimulatorDiagnostics(**{
-                        **diagnostics.model_dump(), 'guard_outcome': 'NOT_REACHED',
-                        'failure': SimulatorFailure(code='UNEXPECTED_EXCEPTION',
-                            exception_type=type(simulator_error).__name__, message=str(simulator_error)),
-                    })
-                if simulator_error is None and diagnostics.failure is not None:
-                    raise ValueError('Diagnostics claim failure for an accepted simulator result')
-                stopped = proposal is not None and isinstance(proposal.decision, StopDecision)
-                attempt = SimulatorAttemptTrace(**{name: getattr(diagnostics, name) for name in type(diagnostics).model_fields},
-                    attempt_index=len(simulator_attempts), input_history_length=len(history), elapsed=elapsed,
-                    outcome='FAILURE' if simulator_error is not None else 'PUBLIC_STOP' if stopped else 'CUSTOMER_TURN',
-                    rendered_customer_message=proposal.decision.message if simulator_error is None and not stopped else None,
-                    stop_decision=proposal.decision if simulator_error is None and stopped else None)
+                diagnostics = None
+                validated_diagnostics = None
+                stage = 'RETRIEVAL'
+                try:
+                    raw_diagnostics = simulator_diagnostics()
+                    stage = 'VALIDATION'
+                    diagnostics = SimulatorDiagnostics.model_validate(raw_diagnostics)
+                    validated_diagnostics = diagnostics
+                    stage = 'ATTEMPT_CONSTRUCTION'
+                    if simulator_error is not None and diagnostics.failure is None:
+                        diagnostics = SimulatorDiagnostics(**{
+                            **diagnostics.model_dump(), 'guard_outcome': 'NOT_REACHED',
+                            'failure': SimulatorFailure(code='UNEXPECTED_EXCEPTION',
+                                exception_type=type(simulator_error).__name__, message=str(simulator_error)),
+                        })
+                    if simulator_error is None and diagnostics.failure is not None:
+                        raise ValueError('Diagnostics claim failure for an accepted simulator result')
+                    stopped = proposal is not None and isinstance(proposal.decision, StopDecision)
+                    attempt = SimulatorAttemptTrace(**{name: getattr(diagnostics, name) for name in type(diagnostics).model_fields},
+                        attempt_index=len(simulator_attempts), input_history_length=len(history), elapsed=elapsed,
+                        outcome='FAILURE' if simulator_error is not None else 'PUBLIC_STOP' if stopped else 'CUSTOMER_TURN',
+                        rendered_customer_message=proposal.decision.message if simulator_error is None and not stopped else None,
+                        stop_decision=proposal.decision if simulator_error is None and stopped else None)
+                except Exception as exc:
+                    recording_failure = TechnicalFailure(phase='RUNNER_INTEGRITY',
+                        exception_type=type(exc).__name__,
+                        message=f'CS2 diagnostics {stage.lower()} failed; see simulator attempt {len(simulator_attempts)}')
+                    original_failure = None
+                    if simulator_error is not None:
+                        original_failure = SimulatorFailure(
+                            code=simulator_error.code if isinstance(simulator_error, CS2Failure) else 'UNEXPECTED_EXCEPTION',
+                            exception_type=type(simulator_error).__name__,
+                            message='Simulator invocation failed; detailed diagnostics unavailable')
+                        termination = TechnicalTermination(failure=TechnicalFailure(phase='SIMULATOR',
+                            exception_type=original_failure.exception_type,
+                            message=f'CS2 {original_failure.code}; see simulator attempt {len(simulator_attempts)}'))
+                        secondary.append(recording_failure)
+                    else:
+                        termination = TechnicalTermination(failure=recording_failure)
+                    stopped = proposal is not None and isinstance(proposal.decision, StopDecision)
+                    event = SimulatorAttemptRecordingFailureEvent(
+                        attempt_index=len(simulator_attempts), input_history_length=len(history), elapsed=elapsed,
+                        invocation_outcome='RETURNED' if returned else 'RAISED',
+                        returned_decision_kind=('PUBLIC_STOP' if stopped else 'CUSTOMER_TURN') if proposal is not None else None,
+                        rendered_customer_message=proposal.decision.message if proposal is not None and not stopped else None,
+                        simulator_failure=original_failure, recording_stage=stage,
+                        recording_failure=recording_failure, validated_diagnostics=validated_diagnostics)
+                    simulator_recording_failures.append(event)
+                    phase = 'OUTPUT'
+                    _append_event(Path(outputs.trace), event)
+                    break
                 simulator_attempts.append(attempt)
                 if simulator_error is not None:
                     termination = TechnicalTermination(failure=_simulator_failure(attempt))
@@ -522,15 +580,17 @@ def run_scenario(
         timing=RunTiming(full_run_elapsed=perf_counter()-started,
             provider_elapsed=sum(t.provider_elapsed for t in traces), runtime_elapsed=sum(t.runtime_elapsed for t in traces)),
         outputs=outputs, secondary_failures=tuple(secondary),
-        simulator_summary=summarize_attempts(simulator_attempts) if recording else None,
-        simulator_attempts=tuple(simulator_attempts))
+        simulator_summary=summarize_attempts(simulator_attempts, simulator_recording_failures) if recording else None,
+        simulator_attempts=tuple(simulator_attempts),
+        simulator_recording_failures=tuple(simulator_recording_failures))
     try:
         _write_json(Path(outputs.public_history), result.public_record.model_dump(mode='json'))
         _write_json(Path(outputs.result), result.model_dump(mode='json', exclude={'traces'}))
         # A terminal event also exists for zero-turn public stops/setup failures.
         if recording:
             _append_event(Path(outputs.trace), TerminationEvent(termination=result.termination,
-                simulator_attempt_index=simulator_attempts[-1].attempt_index if simulator_attempts else None))
+                simulator_attempt_index=(simulator_recording_failures[-1].attempt_index if simulator_recording_failures
+                    else simulator_attempts[-1].attempt_index if simulator_attempts else None)))
         else:
             with Path(outputs.trace).open('a', encoding='utf-8') as stream:
                 stream.write(json.dumps({'terminal': result.termination.model_dump(mode='json')}, ensure_ascii=False)+'\n')

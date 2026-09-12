@@ -1021,12 +1021,13 @@ structured accepted-action/state record. PUBLIC_STOP attempts retain the complet
 verified StopDecision because no TurnTrace exists. Initial and terminal bypasses
 have zero model calls, no model output and guard outcome BYPASSED.
 
-For explicitly recorded CS2 runs, `trace.jsonl` uses trace schema `CS2-1` and a
+For explicitly recorded CS2 runs, `trace.jsonl` uses trace schema `CS2-2` and a
 strict discriminated `TraceEvent` union:
 
 | Event | Payload |
 | --- | --- |
 | SIMULATOR_ATTEMPT | `attempt: SimulatorAttemptTrace` |
+| SIMULATOR_ATTEMPT_RECORDING_FAILURE | Known invocation facts and bounded recording failure; see below |
 | RUNTIME_TURN | `simulator_attempt_index`, `turn: TurnTrace` |
 | TERMINATION | existing `termination`, optional `simulator_attempt_index` |
 
@@ -1040,6 +1041,34 @@ itself is unchanged; its unavailable-evidence declaration continues to describe
 runtime observations, while CS2 model diagnostics live in the new attempt events.
 
 ### Recording order, failure and state adoption
+
+After invocation, the runner retrieves diagnostics exactly once, validates them,
+then constructs the normal attempt. Retrieval, validation, or attempt-construction
+failure creates `SimulatorAttemptRecordingFailureEvent`, with:
+
+- `kind = SIMULATOR_ATTEMPT_RECORDING_FAILURE`;
+- `attempt_index`, `input_history_length`, `elapsed` (total invocation duration);
+- `invocation_outcome` (`RETURNED` or `RAISED`);
+- optional `returned_decision_kind` (`CUSTOMER_TURN` or `PUBLIC_STOP`) and
+  `rendered_customer_message`, only from a validated returned step;
+- optional bounded `simulator_failure` (original exception type and failure code);
+- `recording_stage` (`RETRIEVAL`, `VALIDATION`, or `ATTEMPT_CONSTRUCTION`) and
+  bounded `recording_failure: TechnicalFailure`;
+- optional `validated_diagnostics`, only if diagnostics validation succeeded
+  before attempt construction failed. Malformed/unretrieved diagnostics are not
+  salvaged or reconstructed.
+
+The event is retained in `ExperimentRunResult.simulator_recording_failures`
+(excluded from result serialization) before trace persistence is attempted.
+It always terminates execution: no provider, runtime, proposed state adoption,
+customer-message attempt, or public-history append follows it. No diagnostic or
+model retry occurs. Successful simulator return plus recording failure has primary
+`RUNNER_INTEGRITY`; a simulator exception stays primary `SIMULATOR`, with recording
+failure secondary. Failure to write this event adds secondary `OUTPUT` and retains
+the in-memory event. Normal attempt persistence remains a dispatch precondition.
+Old `CS2-1` traces retain their original vocabulary; they are not relabeled or
+reinterpreted as `CS2-2`. CS1 serialization is unchanged.
+
 
 Each CS2 attempt is finalized, retained in memory and written/flushed before
 provider invocation. A model/parse/schema/guard failure produces an attempt event
@@ -1087,6 +1116,14 @@ attest a server. Actual provenance verification remains separate preflight work.
 `ExperimentRunResult` adds optional `simulator_summary` (kind, attempt/model call
 counts, total/model elapsed durations, optional failed-attempt index/code), plus
 `simulator_attempts` retained only in memory and excluded from serialization.
+Summary `diagnostics_completeness` is `COMPLETE` for fully observed attempts and
+`INCOMPLETE` if any invocation has a recording-failure event. In the latter case,
+`model_call_count` and `model_elapsed` are null (unknown), never zero-filled partial
+sums. `attempt_count` includes both event types; `elapsed` includes every retained
+invocation's measured call duration. Known per-attempt diagnostics remain available
+in memory/trace even when aggregate model totals are unknown. A known simulator
+failure index/code is retained independently of diagnostic completeness.
+
 `result.json` contains no detailed model/proposal diagnostics. Summary is omitted
 entirely for CS1; other existing None serialization behavior is unchanged. Legacy
 results still deserialize. Existing public_history.json remains PublicRunRecord,

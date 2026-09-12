@@ -39,7 +39,7 @@ class SimulatorMetadata(PublicContract):
     guard_source_sha256: Digest
     evidence_source_sha256: Digest
     renderer_source_sha256: Digest
-    trace_schema_version: Literal['CS2-1'] = 'CS2-1'
+    trace_schema_version: Literal['CS2-2'] = 'CS2-2'
     ollama_client_version: Nonblank | None = None
     ollama_server_version: Nonblank | None = None
 
@@ -128,15 +128,21 @@ class SimulatorAttemptTrace(SimulatorDiagnostics):
 class SimulatorSummary(PublicContract):
     kind: Literal['CS2'] = 'CS2'
     attempt_count: Count
-    model_call_count: Count
+    diagnostics_completeness: Literal['COMPLETE', 'INCOMPLETE'] = 'COMPLETE'
+    model_call_count: Count | None
     elapsed: Duration
-    model_elapsed: Duration
+    model_elapsed: Duration | None
     failed_attempt_index: Count | None = None
     failure_code: FailureCode | None = None
 
     @model_validator(mode='after')
     def consistent(self):
-        if self.model_call_count > self.attempt_count:
+        if self.diagnostics_completeness == 'COMPLETE':
+            if self.model_call_count is None or self.model_elapsed is None:
+                raise ValueError('Complete diagnostics require model totals')
+        elif self.model_call_count is not None or self.model_elapsed is not None:
+            raise ValueError('Incomplete diagnostics have unknown model totals')
+        if self.model_call_count is not None and self.model_call_count > self.attempt_count:
             raise ValueError('More model calls than attempts')
         if (self.failed_attempt_index is None) != (self.failure_code is None):
             raise ValueError('Failure index/code must be paired')
@@ -145,11 +151,16 @@ class SimulatorSummary(PublicContract):
         return self
 
 
-def summarize_attempts(attempts):
-    failed = next((a for a in reversed(attempts) if a.failure), None)
-    return SimulatorSummary(attempt_count=len(attempts), model_call_count=sum(a.model_calls for a in attempts),
-        elapsed=sum((a.elapsed for a in attempts), 0.0), model_elapsed=sum((a.model_elapsed or 0.0 for a in attempts), 0.0),
-        failed_attempt_index=failed.attempt_index if failed else None, failure_code=failed.failure.code if failed else None)
+def summarize_attempts(attempts, recording_failures=()):
+    failures = [(a.attempt_index, a.failure.code) for a in attempts if a.failure]
+    failures += [(e.attempt_index, e.simulator_failure.code) for e in recording_failures if e.simulator_failure]
+    failed = max(failures, default=None)
+    return SimulatorSummary(attempt_count=len(attempts) + len(recording_failures),
+        diagnostics_completeness='INCOMPLETE' if recording_failures else 'COMPLETE',
+        model_call_count=None if recording_failures else sum(a.model_calls for a in attempts),
+        elapsed=sum((a.elapsed for a in (*attempts, *recording_failures)), 0.0),
+        model_elapsed=None if recording_failures else sum((a.model_elapsed or 0.0 for a in attempts), 0.0),
+        failed_attempt_index=failed[0] if failed else None, failure_code=failed[1] if failed else None)
 
 
 class LLMSimulator:
