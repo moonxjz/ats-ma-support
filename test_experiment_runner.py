@@ -478,3 +478,457 @@ class RunnerTests(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+# CS2-A2 tests use injected model replies and the existing scripted ATS boundary.
+# No live client, live scenario entry point, or model discovery is used.
+from types import SimpleNamespace
+from hashlib import sha256
+from evaluation import llm_customer_simulator as cs2
+from evaluation import llm_public_evidence as cs2_evidence
+from evaluation.llm_simulator_integration import (
+    make_llm_simulator, make_simulator_metadata, verify_cs2_public_approvals,
+    SimulatorMetadata, SimulatorAttemptTrace,
+)
+
+
+def proposed_reply(**kwargs):
+    """Mock proposer reads only the actual customer/public prompt payload."""
+    payload = json.loads(kwargs['messages'][1]['content'])
+    customer = cs2.CustomerSimulatorInput.model_validate_json(json.dumps(payload)).customer
+    text = payload['public_history'][-1]['text']
+    index = len(payload['public_history']) - 1
+    artifact = cs2_evidence.extract_artifact(text, index)
+    if artifact:
+        request = cs2_evidence.approval_requests(text, index, artifact)[0]
+        proposal = {'kind': 'CUSTOMER_TURN', 'actions': [{
+            'kind': 'CONFIRM_CONFIGURATION' if artifact.kind == 'CONFIGURATION' else 'CONFIRM_FINAL_ORDER',
+            'artifact': artifact.evidence.model_dump(mode='json'),
+            'approval_request': request.model_dump(mode='json')}]}
+    elif 'has been created' in text:
+        proposal = {'kind': 'STOP', 'category': 'ORDER_CREATED',
+                    'evidence': [cs2_evidence.reference(text, index).model_dump(mode='json')]}
+    else:
+        items = []
+        for request in cs2_evidence.requested_fields(text, index):
+            value = cs2.customer_value(customer, request.field)
+            typed = {'kind': 'ABSENT'} if value is None else {'kind': 'QUANTITY' if type(value) is int else 'TEXT', 'value': value}
+            items.append({'field': request.field, 'value': typed, 'request_evidence': [request.evidence.model_dump(mode='json')]})
+        proposal = {'kind': 'CUSTOMER_TURN', 'actions': [{'kind': 'PROVIDE_INFORMATION', 'items': items}]}
+    return SimpleNamespace(message=SimpleNamespace(content=json.dumps({'proposal': proposal}), thinking='DO_NOT_RECORD_THINKING'), done=True)
+
+
+class CS2RunnerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.scenarios, cls.knowledge = prepare_pilot()
+        cls.metadata = make_simulator_metadata(provenance='MOCK')
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def run_cs2(self, *, chat=None, events=None, **kwargs):
+        chat = Mock(side_effect=proposed_reply) if chat is None else chat
+        simulator = make_llm_simulator(chat_fn=chat)
+        script = ScriptedExecution(self.scenarios[0], happy_events(self.scenarios[0]) if events is None else events)
+        result = run_scenario(self.scenarios[0], run_directory=self.root/f'run-{len(list(self.root.iterdir()))}',
+            knowledge=self.knowledge, simulator=simulator, simulator_metadata=self.metadata,
+            simulator_diagnostics=simulator.take_diagnostics, execution_factory=script.factory, **kwargs)
+        return result, script, chat
+
+    def validate(self, result, **kwargs):
+        return validate_pilot_result(result, customer=self.scenarios[0].customer_view(),
+            expectations=self.scenarios[0].evaluation, artifact_verifier=verify_cs2_public_approvals, **kwargs)
+
+    def events(self, result):
+        return [json.loads(line) for line in Path(result.outputs.trace).read_text().splitlines()]
+
+    def test_mocked_completion_and_linkage(self):
+        result, script, chat = self.run_cs2()
+        self.assertEqual(self.validate(result).verdict, 'PASS')
+        events = self.events(result)
+        attempts = [e['attempt'] for e in events if e['kind'] == 'SIMULATOR_ATTEMPT']
+        runtime = [e for e in events if e['kind'] == 'RUNTIME_TURN']
+        self.assertEqual(len(attempts), len(runtime) + 1)
+        self.assertEqual(attempts[0]['model_calls'], 0)
+        self.assertEqual(attempts[0]['guard_outcome'], 'BYPASSED')
+        self.assertEqual(attempts[0]['rendered_customer_message'], self.scenarios[0].customer.initial_message)
+        self.assertEqual(attempts[-1]['outcome'], 'PUBLIC_STOP')
+        self.assertEqual(events[-1]['kind'], 'TERMINATION')
+        for event in runtime:
+            attempt = attempts[event['simulator_attempt_index']]
+            self.assertEqual(event['turn']['customer_message'], attempt['rendered_customer_message'])
+            self.assertNotIn('decision', attempt)
+            self.assertNotIn('customer_turn', attempt)
+            self.assertNotIn('proposed_customer_state', attempt)
+        self.assertEqual(chat.call_count, len(attempts)-1)
+
+    def test_attempt_written_before_provider(self):
+        seen = []
+        def provider(message, history, *, knowledge):
+            path = next(self.root.glob('run-*/trace.jsonl'))
+            last = json.loads(path.read_text().splitlines()[-1])
+            self.assertEqual(last['kind'], 'SIMULATOR_ATTEMPT')
+            self.assertEqual(last['attempt']['rendered_customer_message'], message)
+            seen.append(message)
+            return provide_support_knowledge(message, history, knowledge=knowledge)
+        result, script, _ = self.run_cs2(knowledge_provider=provider)
+        self.assertEqual(tuple(seen), result.dispatched_customer_messages)
+        self.assertEqual(len(script.calls), len(seen))
+
+    def assert_failed_second_attempt(self, chat, code):
+        provider = Mock(wraps=provide_support_knowledge)
+        result, script, chat = self.run_cs2(chat=chat, knowledge_provider=provider)
+        self.assertEqual(result.termination.failure.phase, 'SIMULATOR')
+        self.assertEqual(result.simulator_attempts[-1].failure.code, code)
+        self.assertEqual(result.simulator_attempts[-1].outcome, 'FAILURE')
+        self.assertEqual(len(script.calls), 1)  # Only turn zero preceded this failure.
+        self.assertEqual(provider.call_count, 1)
+        self.assertEqual(result.runtime_calls, 1)
+        self.assertEqual(result.completed_turns, 1)
+        self.assertEqual(result.final_customer_simulator_state, result.traces[0].proposed_customer_state)
+        self.assertEqual(len(result.attempted_customer_messages), 1)
+        self.assertEqual(len(result.simulator_attempts), 2)
+        chat.assert_called_once()
+        self.assertEqual([e['kind'] for e in self.events(result)],
+                         ['SIMULATOR_ATTEMPT', 'RUNTIME_TURN', 'SIMULATOR_ATTEMPT', 'TERMINATION'])
+        return result
+
+    def test_invalid_json_retained_no_dispatch(self):
+        raw = 'not JSON PRIVATE_RAW_MARKER'
+        result = self.assert_failed_second_attempt(Mock(return_value=SimpleNamespace(message=SimpleNamespace(content=raw))), 'INVALID_PROPOSAL')
+        self.assertEqual(result.simulator_attempts[-1].raw_model_content, raw)
+        self.assertIsNone(result.simulator_attempts[-1].parsed_proposal_json)
+
+    def test_schema_and_duplicate_json_failures(self):
+        for raw in ('{"proposal":{},"proposal":{}}', '{"proposal":{"kind":"INITIAL_MESSAGE"}}',
+                    '{"proposal":{"kind":"CUSTOMER_TURN","actions":[],"customer_text":"PRIVATE_RAW_MARKER"}}', ''):
+            with self.subTest(raw=raw):
+                self.assert_failed_second_attempt(Mock(return_value=SimpleNamespace(message=SimpleNamespace(content=raw))), 'INVALID_PROPOSAL')
+
+    def test_guard_rejection_preserves_parsed_proposal(self):
+        def wrong(**kwargs):
+            reply = proposed_reply(**kwargs)
+            value = json.loads(reply.message.content)
+            value['proposal']['actions'][0]['items'][0]['value']['value'] = 'PRIVATE_RAW_MARKER'
+            reply.message.content = json.dumps(value)
+            return reply
+        result = self.assert_failed_second_attempt(Mock(side_effect=wrong), 'GUARD_REJECTED')
+        self.assertEqual(result.simulator_attempts[-1].guard_outcome, 'REJECTED')
+        self.assertIn('PRIVATE_RAW_MARKER', result.simulator_attempts[-1].parsed_proposal_json)
+
+    def test_model_exception_no_retry(self):
+        result = self.assert_failed_second_attempt(Mock(side_effect=RuntimeError('PRIVATE_RAW_MARKER')), 'MODEL_FAILURE')
+        self.assertIsNone(result.simulator_attempts[-1].raw_model_content)
+        self.assertIsNotNone(result.simulator_attempts[-1].model_elapsed)
+
+    def test_raw_content_only_in_hidden_trace(self):
+        raw = '{"proposal":{"kind":"PRIVATE_RAW_MARKER"}}'
+        result = self.assert_failed_second_attempt(Mock(return_value=SimpleNamespace(message=SimpleNamespace(content=raw, thinking='SECRET_THINKING'))), 'INVALID_PROPOSAL')
+        self.assertIn('PRIVATE_RAW_MARKER', Path(result.outputs.trace).read_text())
+        for path in (result.outputs.result, result.outputs.manifest, result.outputs.public_history):
+            self.assertNotIn('PRIVATE_RAW_MARKER', Path(path).read_text())
+        self.assertNotIn('PRIVATE_RAW_MARKER', result.termination.model_dump_json())
+        self.assertNotIn('SECRET_THINKING', Path(result.outputs.trace).read_text())
+        self.assertNotIn('SECRET_THINKING', repr(result.simulator_attempts))
+
+    def test_summary_and_fingerprint(self):
+        result, _, chat = self.run_cs2()
+        summary = result.simulator_summary
+        self.assertEqual(summary.attempt_count, len(result.simulator_attempts))
+        self.assertEqual(summary.model_call_count, chat.call_count)
+        self.assertAlmostEqual(summary.elapsed, sum(a.elapsed for a in result.simulator_attempts))
+        self.assertAlmostEqual(summary.model_elapsed, sum(a.model_elapsed or 0 for a in result.simulator_attempts))
+        self.assertIsNone(summary.failure_code)
+        for call, attempt in zip(chat.call_args_list, result.simulator_attempts[1:]):
+            self.assertEqual(attempt.input_sha256, sha256(call.kwargs['messages'][1]['content'].encode()).hexdigest())
+        saved = json.loads(Path(result.outputs.result).read_text())
+        self.assertNotIn('simulator_attempts', saved)
+        self.assertNotIn('parsed_proposal_json', json.dumps(saved))
+        self.assertEqual(saved['simulator_summary'], summary.model_dump(mode='json'))
+
+    def test_manifest_mock_provenance(self):
+        result, _, _ = self.run_cs2()
+        manifest = json.loads(Path(result.outputs.manifest).read_text())
+        self.assertEqual(manifest['simulator'], self.metadata.model_dump(mode='json'))
+        self.assertEqual(manifest['simulator']['provenance'], 'MOCK')
+        self.assertIsNone(manifest['simulator']['model_digest'])
+        self.assertIsNone(manifest['simulator']['source_commit'])
+        self.assertEqual(manifest['simulator']['trace_schema_version'], 'CS2-1')
+        with self.assertRaises(ValueError):
+            make_simulator_metadata(provenance='MOCK', model_digest='invented')
+        with self.assertRaises(ValueError):
+            make_simulator_metadata(provenance='LIVE_VERIFIED')
+
+    def test_provider_failure_keeps_prior_state(self):
+        provider = Mock(side_effect=ValueError('provider failed'))
+        result, script, chat = self.run_cs2(knowledge_provider=provider)
+        self.assertEqual(result.termination.failure.phase, 'PROVIDER')
+        self.assertEqual(result.final_customer_simulator_state, CustomerSimulatorState())
+        self.assertEqual(len(result.simulator_attempts), 1)
+        self.assertEqual(result.simulator_attempts[0].outcome, 'CUSTOMER_TURN')
+        self.assertFalse(result.traces[0].dispatched)
+        self.assertFalse(script.calls)
+        chat.assert_not_called()
+
+    def test_runtime_failure_pending_write_preserved(self):
+        events = happy_events(self.scenarios[0])
+        events[-1].fail_after_commit = True
+        result, script, _ = self.run_cs2(events=events)
+        self.assertEqual(result.termination.failure.phase, 'RUNTIME')
+        self.assertIsNotNone(result.termination.failure.pending_turn_json)
+        self.assertEqual(result.persistence_observation.record_count, 1)
+        self.assertTrue(result.traces[-1].dispatched)
+        self.assertFalse(result.traces[-1].completed)
+        self.assertEqual(result.final_customer_simulator_state, result.traces[-1].proposed_customer_state)
+        self.assertEqual(result.completed_turns, result.runtime_calls - 1)
+
+    def test_recording_failure_prevents_dispatch(self):
+        def fail_attempt(path, event):
+            if event.kind == 'SIMULATOR_ATTEMPT':
+                raise OSError('disk failed')
+        with patch('evaluation.experiment_runner._append_event', side_effect=fail_attempt):
+            result, script, chat = self.run_cs2()
+        self.assertEqual(result.termination.failure.phase, 'OUTPUT')
+        self.assertEqual(len(result.simulator_attempts), 1)
+        self.assertEqual(result.provider_calls, 0)
+        self.assertEqual(result.runtime_calls, 0)
+        self.assertEqual(result.final_customer_simulator_state, CustomerSimulatorState())
+        self.assertFalse(script.calls)
+        chat.assert_not_called()
+
+    def test_recording_failure_retains_primary_simulator_failure(self):
+        from evaluation.experiment_runner import _append_event
+        def fail_second(path, event):
+            if event.kind == 'SIMULATOR_ATTEMPT' and event.attempt.attempt_index == 1:
+                raise OSError('disk failed')
+            return _append_event(path, event)
+        chat = Mock(side_effect=RuntimeError('PRIVATE_RAW_MARKER'))
+        with patch('evaluation.experiment_runner._append_event', side_effect=fail_second):
+            result, script, _ = self.run_cs2(chat=chat)
+        self.assertEqual(result.termination.failure.phase, 'SIMULATOR')
+        self.assertEqual(result.secondary_failures[0].phase, 'OUTPUT')
+        self.assertEqual(result.simulator_attempts[-1].failure.message, 'PRIVATE_RAW_MARKER')
+        self.assertEqual(len(script.calls), 1)
+        self.assertNotIn('PRIVATE_RAW_MARKER', Path(result.outputs.result).read_text())
+
+    def test_cs2_requires_verifier(self):
+        result, _, _ = self.run_cs2()
+        validation = validate_pilot_result(result, customer=self.scenarios[0].customer_view(), expectations=self.scenarios[0].evaluation)
+        self.assertEqual(validation.verdict, 'FAIL')
+        self.assertEqual(validation.checks[0].name, 'cs2_verifier_required')
+
+    def test_cs2_framing_bypasses_cs1_parser_in_validation(self):
+        events = happy_events(self.scenarios[0])
+        events[-3].text = 'Many thanks for your patience today!\n\n' + events[-3].text.replace('Please confirm the configuration.', 'If everything looks right, please approve this configuration.')
+        events[-2].text = 'Many thanks for your patience today!\n\n' + events[-2].text
+        from evaluation.public_observation import observe_public_response
+        self.assertIsNone(observe_public_response(events[-2].text, 1).artifact.approval_request)
+        result, _, _ = self.run_cs2(events=events)
+        with patch('evaluation.experiment_runner.observe_public_response', side_effect=AssertionError('CS1 parser called')):
+            self.assertEqual(self.validate(result).verdict, 'PASS')
+
+    def test_audit_reconstructs_both_receipts(self):
+        result, _, _ = self.run_cs2()
+        audit = verify_cs2_public_approvals(result.public_record.public_history, customer=self.scenarios[0].customer_view())
+        self.assertFalse(audit.errors)
+        self.assertEqual(tuple(a.receipt for a in audit.approvals), result.final_customer_simulator_state.approval_receipts)
+        self.assertEqual([a.receipt.kind for a in audit.approvals], ['CONFIGURATION', 'FINAL_ORDER'])
+
+    def test_tampered_saved_receipt_fails(self):
+        result, _, _ = self.run_cs2()
+        state = result.final_customer_simulator_state
+        receipts = list(state.approval_receipts)
+        receipts[0] = receipts[0].model_copy(update={'repeated': True})
+        changed = result.model_copy(update={'final_customer_simulator_state': state.model_copy(update={'approval_receipts': tuple(receipts)})})
+        checks = {c.name: c.status for c in self.validate(changed).checks}
+        self.assertEqual(checks['approval_receipts_match_public'], 'FAIL')
+
+    def test_wrong_following_confirmation_fails(self):
+        result, _, _ = self.run_cs2()
+        history = list(result.public_record.public_history)
+        index = result.final_customer_simulator_state.approval_receipts[0].customer_message_index
+        history[index] = PublicMessage(role='user', text='No, do not confirm.')
+        audit = verify_cs2_public_approvals(tuple(history), customer=self.scenarios[0].customer_view())
+        self.assertTrue(audit.errors)
+        self.assertFalse(audit.approvals)
+
+    def test_missing_configuration_approval_fails(self):
+        config, final = artifacts(self.scenarios[0])
+        history = (PublicMessage(role='user', text=self.scenarios[0].customer.initial_message),
+                   PublicMessage(role='assistant', text=final),
+                   PublicMessage(role='user', text='Yes, I confirm the final order and would like to place it.'),
+                   PublicMessage(role='assistant', text='Your order has been created.'))
+        audit = verify_cs2_public_approvals(history, customer=self.scenarios[0].customer_view())
+        self.assertTrue(any('MISSING_PRIOR_CONFIGURATION' in error for error in audit.errors))
+        self.assertFalse(audit.approvals)
+
+    def test_audit_fact_and_veto_rejection(self):
+        result, _, _ = self.run_cs2()
+        for old, new in (('Tassie Oak', 'Marri'), ('Please confirm the configuration.', 'Please confirm the configuration. Do not confirm this configuration.')):
+            history = tuple(PublicMessage(role=m.role, text=m.text.replace(old, new) if m.role == 'assistant' else m.text) for m in result.public_record.public_history)
+            audit = verify_cs2_public_approvals(history, customer=self.scenarios[0].customer_view())
+            self.assertTrue(audit.errors)
+
+    def test_public_audit_has_only_public_customer_inputs(self):
+        result, _, _ = self.run_cs2()
+        verifier = Mock(wraps=verify_cs2_public_approvals)
+        validation = validate_pilot_result(result, customer=self.scenarios[0].customer_view(), expectations=self.scenarios[0].evaluation, artifact_verifier=verifier)
+        self.assertEqual(validation.verdict, 'PASS')
+        verifier.assert_called_once_with(result.public_record.public_history, customer=self.scenarios[0].customer_view())
+
+    def test_derived_truth_stays_evaluator_owned(self):
+        result, _, _ = self.run_cs2()
+        for field, wrong in (('product_sku', 'WRONG'), ('total_price', '1')):
+            record = json.loads(result.persistence_observation.records_json[0])
+            record['order'][field] = wrong
+            changed = result.model_copy(update={'persistence_observation': PersistenceObservation(status='VALID', record_count=1, records_json=(json.dumps(record),))})
+            checks = {c.name: c.status for c in self.validate(changed).checks}
+            self.assertEqual(checks['persisted_system_derived'], 'FAIL')
+            self.assertEqual(checks['configuration_approved'], 'PASS')
+            self.assertEqual(checks['final_order_approved'], 'PASS')
+
+    def test_legacy_default_serialization_and_verifier(self):
+        script = ScriptedExecution(self.scenarios[0], happy_events(self.scenarios[0]))
+        result = run_scenario(self.scenarios[0], run_directory=self.root/'legacy', knowledge=self.knowledge, execution_factory=script.factory)
+        self.assertIsNone(result.simulator_summary)
+        self.assertNotIn('simulator_summary', result.model_dump())
+        self.assertNotIn('simulator_attempts', result.model_dump())
+        self.assertNotIn('simulator', json.loads(Path(result.outputs.manifest).read_text()))
+        lines = self.events(result)
+        self.assertEqual(len(lines), len(result.traces)+1)
+        self.assertIn('terminal', lines[-1])
+        self.assertNotIn('kind', lines[0])
+        self.assertEqual(validate_pilot_result(result, customer=self.scenarios[0].customer_view(), expectations=self.scenarios[0].evaluation).verdict, 'PASS')
+        self.assertEqual(ExperimentRunResult.model_validate_json(result.model_dump_json()), result)
+
+    def test_diagnostics_equivalence(self):
+        customer = self.scenarios[0].customer_view()
+        initial = CustomerSimulatorInput(customer=customer, state=CustomerSimulatorState(), public_history=())
+        first = cs2.step(initial, chat_fn=Mock())
+        inputs = CustomerSimulatorInput(customer=customer, state=first.state,
+            public_history=(PublicMessage(role='user', text=first.decision.message), PublicMessage(role='assistant', text=FACT_REQUEST)))
+        for raw_kind in ('valid', 'invalid', 'guard', 'model'):
+            calls = []
+            def reply(**kwargs):
+                calls.append(kwargs)
+                if raw_kind == 'model':
+                    raise RuntimeError('same transport failure')
+                if raw_kind == 'invalid':
+                    return SimpleNamespace(message=SimpleNamespace(content='{broken'))
+                response = proposed_reply(**kwargs)
+                if raw_kind == 'guard':
+                    response.message.content = response.message.content.replace('Demo1 Customer1', 'Wrong')
+                return response
+            outcomes = []
+            capture = cs2.ProposalDiagnostics()
+            for diagnostic in (None, capture):
+                try:
+                    outcomes.append(cs2.step(inputs, chat_fn=reply, diagnostics=diagnostic))
+                except cs2.CS2Failure as exc:
+                    outcomes.append((exc.code, str(exc)))
+            self.assertEqual(outcomes[0], outcomes[1])
+            self.assertEqual(calls[0], calls[1])
+            if capture.parsed_proposal is not None:
+                self.assertEqual(capture.parsed_proposal, cs2.parse_proposal(capture.raw_model_content))
+        capture = cs2.ProposalDiagnostics()
+        self.assertEqual(cs2.step(initial, chat_fn=Mock(), diagnostics=capture), first)
+        self.assertEqual(capture.model_calls, 0)
+
+    def test_architecture_fairness(self):
+        a, _, a_chat = self.run_cs2(architecture='A3')
+        b, _, b_chat = self.run_cs2(architecture='TEST_OTHER')
+        self.assertEqual(a_chat.call_args_list, b_chat.call_args_list)
+        self.assertEqual(a.dispatched_customer_messages, b.dispatched_customer_messages)
+        self.assertEqual(a.final_customer_simulator_state, b.final_customer_simulator_state)
+        self.assertEqual(self.validate(a), self.validate(b))
+        for call in a_chat.call_args_list:
+            payload = json.loads(call.kwargs['messages'][1]['content'])
+            self.assertEqual(set(payload), {'customer', 'state', 'public_history'})
+            self.assertNotIn('TEST_OTHER', json.dumps(payload))
+
+    def test_metadata_and_diagnostics_must_be_paired(self):
+        with self.assertRaises(ValueError):
+            run_scenario(self.scenarios[0], run_directory=self.root/'bad', simulator_metadata=self.metadata)
+        self.assertFalse((self.root/'bad').exists())
+
+    def test_trace_events_are_strict_and_round_trip(self):
+        from pydantic import TypeAdapter
+        from evaluation.experiment_runner import TraceEvent
+        result, _, _ = self.run_cs2()
+        adapter = TypeAdapter(TraceEvent)
+        for line in Path(result.outputs.trace).read_text().splitlines():
+            event = adapter.validate_json(line)
+            self.assertEqual(json.loads(event.model_dump_json()), json.loads(line))
+            value = json.loads(line)
+            value['extra'] = True
+            with self.assertRaises(ValueError):
+                adapter.validate_json(json.dumps(value))
+        with self.assertRaises(ValueError):
+            SimulatorAttemptTrace(**{**result.simulator_attempts[0].model_dump(), 'raw_model_content': 'invented'})
+
+    def test_diagnostics_public_stop_equivalence(self):
+        customer = self.scenarios[0].customer_view()
+        first = cs2.step(CustomerSimulatorInput(customer=customer, state=CustomerSimulatorState(), public_history=()), chat_fn=Mock())
+        inputs = CustomerSimulatorInput(customer=customer, state=first.state,
+            public_history=(PublicMessage(role='user', text=first.decision.message),
+                            PublicMessage(role='assistant', text='Your order has been created.')))
+        capture = cs2.ProposalDiagnostics()
+        plain = cs2.step(inputs, chat_fn=Mock(side_effect=proposed_reply))
+        observed = cs2.step(inputs, chat_fn=Mock(side_effect=proposed_reply), diagnostics=capture)
+        self.assertEqual(plain, observed)
+        self.assertEqual(capture.parsed_proposal.kind, 'STOP')
+
+    def test_diagnostics_invalid_input_equivalence(self):
+        inputs = CustomerSimulatorInput(customer=self.scenarios[0].customer_view(), state=CustomerSimulatorState(), public_history=())
+        inputs = inputs.model_copy(update={'architecture': 'FORBIDDEN'})
+        outcomes = []
+        for capture in (None, cs2.ProposalDiagnostics()):
+            chat = Mock()
+            with self.assertRaises(cs2.CS2Failure) as caught:
+                cs2.step(inputs, chat_fn=chat, diagnostics=capture)
+            outcomes.append((caught.exception.code, str(caught.exception)))
+            chat.assert_not_called()
+        self.assertEqual(outcomes[0], outcomes[1])
+
+    def test_incomplete_response_content_is_retained(self):
+        chat = Mock(return_value=SimpleNamespace(done=False, message=SimpleNamespace(content='PARTIAL_PRIVATE_CONTENT')))
+        result = self.assert_failed_second_attempt(chat, 'INVALID_PROPOSAL')
+        self.assertEqual(result.simulator_attempts[-1].raw_model_content, 'PARTIAL_PRIVATE_CONTENT')
+        self.assertIsNone(result.simulator_attempts[-1].parsed_proposal_json)
+
+    def test_audit_incomplete_following_pair(self):
+        config, _ = artifacts(self.scenarios[0])
+        history = (PublicMessage(role='user', text=self.scenarios[0].customer.initial_message), PublicMessage(role='assistant', text=config))
+        audit = verify_cs2_public_approvals(history, customer=self.scenarios[0].customer_view())
+        self.assertTrue(audit.incomplete)
+        self.assertFalse(audit.approvals)
+
+    def test_metadata_hashes_identify_actual_sources(self):
+        directory = Path(__file__).parent / 'evaluation'
+        for key, filename in (('guard_source_sha256', 'llm_customer_simulator.py'), ('evidence_source_sha256', 'llm_public_evidence.py'), ('renderer_source_sha256', 'customer_simulator.py')):
+            self.assertEqual(getattr(self.metadata, key), sha256((directory/filename).read_bytes()).hexdigest())
+        self.assertEqual(self.metadata.prompt_sha256, sha256(cs2.SYSTEM_PROMPT.encode()).hexdigest())
+
+    def test_output_error_cannot_leak_raw_output_to_result(self):
+        from evaluation.experiment_runner import _append_event
+        def fail_second(path, event):
+            if event.kind == 'SIMULATOR_ATTEMPT' and event.attempt.attempt_index == 1:
+                raise OSError('PRIVATE_RAW_MARKER')
+            return _append_event(path, event)
+        with patch('evaluation.experiment_runner._append_event', side_effect=fail_second):
+            result, script, _ = self.run_cs2()
+        self.assertEqual(result.termination.failure.phase, 'OUTPUT')
+        self.assertNotIn('PRIVATE_RAW_MARKER', Path(result.outputs.result).read_text())
+        self.assertEqual(len(script.calls), 1)
+        self.assertEqual(len(result.simulator_attempts), 2)
+
+    def test_final_fact_mismatch_rejected_by_public_audit(self):
+        result, _, _ = self.run_cs2()
+        history = tuple(PublicMessage(role=m.role, text=m.text.replace('customer1@', 'other@') if 'Provisional Order' in m.text else m.text) for m in result.public_record.public_history)
+        self.assertNotEqual(history, result.public_record.public_history)
+        audit = verify_cs2_public_approvals(history, customer=self.scenarios[0].customer_view())
+        self.assertTrue(audit.errors)
+        self.assertEqual([a.receipt.kind for a in audit.approvals], ['CONFIGURATION'])

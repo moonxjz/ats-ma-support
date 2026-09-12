@@ -941,3 +941,213 @@ CS2 tests and 91 existing CS1-A/B/C regressions). Coverage includes repeated S03
 field discovery through individual mocked steps, compound pending requests,
 renderer/provider compatibility, immutable state, both artifact kinds, malformed
 proposals, negative evidence, and zero retries. These are not live-pilot results.
+
+## CS2-A2: additive runner recording and public approval audit
+
+CS2-A2 integrates the existing CS2-A1 callable without changing its proposal,
+policy, evidence, rendering or state-adoption semantics. CS1 remains the default.
+There is no live entry point or automatic model/client discovery. Integration
+and validation tests inject both model responses and scripted ATS execution.
+
+### Explicit assembly and observational diagnostics
+
+`llm_simulator_integration.py` supplies `make_llm_simulator(chat_fn=...)`, returning
+an `LLMSimulator` callable with the runner's existing `simulator(inputs)` shape.
+Its `take_diagnostics()` returns and consumes the immutable observation from the
+last invocation. Use a fresh adapter for each sequential run. Metadata is supplied
+separately and never enters the adapter or prompt:
+
+```python
+simulator = make_llm_simulator(chat_fn=mock_chat)
+metadata = make_simulator_metadata(provenance="MOCK")
+result = run_scenario(
+    scenario, run_directory=isolated_directory,
+    knowledge=shared_knowledge, execution_factory=scripted_factory,
+    simulator=simulator,
+    simulator_metadata=metadata,
+    simulator_diagnostics=simulator.take_diagnostics,
+)
+validation = validate_pilot_result(
+    result, customer=scenario.customer_view(), expectations=scenario.evaluation,
+    artifact_verifier=verify_cs2_public_approvals,
+)
+```
+
+Both new runner arguments default to None and must be supplied together. No
+metadata or diagnostic callback is required for CS1. Binding a real Ollama chat
+function would use the same adapter, but requires separate live approval; this
+example is mocked assembly only.
+
+CS2-A1 `step` now accepts optional `diagnostics: ProposalDiagnostics`. It only
+writes observations: canonical input fingerprint, model call count/duration, raw
+content and the actual parsed proposal. Parsing and authorization never read
+these observations. The adapter snapshots them on both return and exception,
+without repair or retry. Regression tests compare enabled/disabled diagnostics
+for accepted turns, public stops, invalid input/output, guard rejection and model
+exceptions, including exact call arguments, outputs/state and failure codes.
+
+The model contract remains qwen3:8b, think=False, stream=False, temperature=0,
+seed=0 and `ProposalEnvelope.model_json_schema()`. There are no new sampling or
+context/output limits. `message.thinking` and entire response objects are never
+recorded. Raw content capture reads ordinary response storage (as used by the
+Ollama response model and test response objects); unsupported response storage can
+leave that observation unavailable without changing response interpretation.
+
+`input_sha256` fingerprints canonical `customer`, `state`, `public_history` JSON.
+It is reproducibility/provenance metadata, not proof of boundary security. Exact
+payload construction and spy tests enforce hidden-input exclusion. Architecture,
+ATS/evaluator/persistence objects and simulator provenance remain absent from
+model inputs.
+
+### Attempt contract and versioned hidden trace
+
+`SimulatorAttemptTrace` is strict/frozen and contains:
+
+- `attempt_index`, `input_history_length`, optional `input_sha256`, total `elapsed`;
+- `model_calls` (0 or 1), optional `model_elapsed`;
+- optional `raw_model_content`, optional `parsed_proposal_json`;
+- `guard_outcome`: NOT_REACHED, ACCEPTED, REJECTED or BYPASSED;
+- `outcome`: CUSTOMER_TURN, PUBLIC_STOP or FAILURE;
+- optional `rendered_customer_message`, `stop_decision`, `failure`.
+
+`SimulatorFailure` records code, exception type and detailed diagnostic message.
+Its codes are the four CS2-A1 codes plus UNEXPECTED_EXCEPTION. Proposed evidence
+refs remain inside the parsed proposal snapshot; refs in rejected proposals are
+unverified claims. No separate duplicated reference list is stored.
+
+CUSTOMER_TURN attempts contain the rendered message but not a duplicate accepted
+CustomerTurn or proposed state. The existing `TurnTrace` is the authoritative
+structured accepted-action/state record. PUBLIC_STOP attempts retain the complete
+verified StopDecision because no TurnTrace exists. Initial and terminal bypasses
+have zero model calls, no model output and guard outcome BYPASSED.
+
+For explicitly recorded CS2 runs, `trace.jsonl` uses trace schema `CS2-1` and a
+strict discriminated `TraceEvent` union:
+
+| Event | Payload |
+| --- | --- |
+| SIMULATOR_ATTEMPT | `attempt: SimulatorAttemptTrace` |
+| RUNTIME_TURN | `simulator_attempt_index`, `turn: TurnTrace` |
+| TERMINATION | existing `termination`, optional `simulator_attempt_index` |
+
+Simulator attempt indices count every invocation, including turn zero and
+terminal failures/stops. Existing TurnTrace.attempt_index still counts customer
+message attempts. Runtime-event linkage preserves the distinction.
+
+CS1 retains its exact legacy bare TurnTrace entries and `{"terminal": ...}`
+record. Its manifest and default validation semantics are unchanged. TurnTrace
+itself is unchanged; its unavailable-evidence declaration continues to describe
+runtime observations, while CS2 model diagnostics live in the new attempt events.
+
+### Recording order, failure and state adoption
+
+Each CS2 attempt is finalized, retained in memory and written/flushed before
+provider invocation. A model/parse/schema/guard failure produces an attempt event
+then `TechnicalTermination(phase="SIMULATOR")`, without a new customer message,
+state adoption, provider/runtime call or completed public pair. No fabricated
+public stop evidence or fallback is created.
+
+Model failures remain distinct from provider, runtime, persistence/integrity,
+output and post-run validation failures. `TechnicalFailure` uses a bounded CS2
+summary pointing to its attempt index. Detailed CS2 exception text can quote raw
+model output and therefore stays in attempt diagnostics. Recording/encoding
+failure summaries are also bounded to prevent that indirect leak.
+
+If attempt writing fails, dispatch does not occur. Available diagnostics remain
+in the returned in-memory result. An existing simulator failure stays primary and
+the output failure is secondary. Otherwise the output failure is primary. Disk
+failures can still leave incomplete files; no on-disk completeness guarantee is
+made when writing fails. Abrupt process death during a model call can lose the
+unfinished attempt; this version writes one finalized record, not intermediate
+start/progress events.
+
+After successful attempt recording, original CS1-D ordering remains:
+customer message -> CS1-C provider -> runtime. Provider failure does not adopt the
+proposed simulator state. State is adopted at runtime dispatch; runtime failure
+retains that proposed state and existing PendingTurn/persistence evidence without
+inventing a completed public pair. Public STOP adopts the returned terminal state
+without provider/runtime dispatch. No retry is added at any layer.
+
+### Metadata, result and timing
+
+The same five filenames remain: manifest.json, public_history.json, trace.jsonl,
+orders.json and result.json. Only CS2 manifests add `simulator: SimulatorMetadata`:
+kind, provenance marker, optional source commit/model digest, fixed model/settings,
+prompt/schema/guard-source/evidence-source/renderer-source SHA-256 values, trace
+schema version and optional Ollama client/server versions.
+
+Source hashes identify complete local source-file bytes for guards/evidence/
+renderer; prompt and schema hashes identify the fixed prompt and canonical JSON
+schema. Caller-supplied commits are not automatically asserted to match the local
+files. MOCK provenance requires absent model digest; unavailable commit/version
+values are null. LIVE_UNVERIFIED/LIVE_VERIFIED distinguish caller-declared live
+provenance; verified metadata requires complete identifiers but does not query or
+attest a server. Actual provenance verification remains separate preflight work.
+
+`ExperimentRunResult` adds optional `simulator_summary` (kind, attempt/model call
+counts, total/model elapsed durations, optional failed-attempt index/code), plus
+`simulator_attempts` retained only in memory and excluded from serialization.
+`result.json` contains no detailed model/proposal diagnostics. Summary is omitted
+entirely for CS1; other existing None serialization behavior is unchanged. Legacy
+results still deserialize. Existing public_history.json remains PublicRunRecord,
+with only identity and completed customer-visible messages.
+
+Total simulator and model-call durations use perf_counter. These are development
+observations, not paper-grade efficiency measurements. The residual duration is
+not labelled guard time. Existing provider/runtime count/timing meanings remain
+unchanged.
+
+### Independent public approval validation
+
+`validate_pilot_result(..., artifact_verifier=None)` retains existing CS1 behavior.
+A declared CS2 result without an explicit verifier returns FAIL with
+`cs2_verifier_required`, rather than silently falling back to CS1 parsing.
+
+`verify_cs2_public_approvals(public_history, *, customer)` accepts only public
+messages and CustomerScenario. It returns `PublicApprovalAudit` containing
+reconstructed `VerifiedApproval` entries, errors and an incomplete-evidence flag.
+It receives no saved guard verdict, receipts, evaluator expectations, persistence,
+workflow state, classification or routing.
+
+The audit independently extracts strict artifact bodies, verifies scoped requests
+and surrounding framing, compares customer-intended facts, checks prior public
+configuration disclosures and requires the actual deterministic approval text.
+Final placement requires an earlier independently verified configuration approval.
+For this alternating conversation model the approving user message must immediately
+follow the artifact within completed public history. This adjacency assumption is
+not a permanent benchmark semantic rule. A last artifact without that following
+completed message is incomplete evidence, not a fabricated approval.
+
+PilotValidation cross-checks saved receipts against the reconstructed receipts,
+including refs, indices and repeated flags. The persisted-versus-approved check
+uses the verified final artifact associated with the dispatch where the order
+first appeared. Known invalid approvals/forged receipts fail; missing associations
+may remain UNKNOWN. Additional checks are `public_approval_audit` and
+`approval_receipts_match_public`; existing approval check names remain.
+
+Public SKU/price rows are validated for structure/presence only by the audit.
+Persisted SKU/prices/shipping/total comparison against ScenarioSpec.evaluation
+remains in the separate evaluator. The public audit does not use workflow flags
+as approval proof. CS2-supported framing no longer passes through CS1's framing
+parser during explicitly configured CS2 validation.
+
+### Validation and stopping boundary
+
+Explicit mocked integration tests cover recording order/linkage, zero-model turn
+zero, malformed proposals, guard/model failures, no retry, raw-output isolation,
+provider/runtime/recording failures, metadata and summaries, independent approval
+and tamper checks, persisted derived-value checks, CS1 legacy compatibility,
+diagnostics equivalence and architecture-independent model calls/decisions/audits.
+No live Ollama or real S01/S02/S03 experiment is used.
+
+CS2-A2 does not prepare or execute a live pilot. A separately approved preflight
+must freeze the implementation commit, actual model digest/effective settings,
+source/prompt/schema and fixture hashes, isolated directory/store and exact live
+command. Same-model dependence and CS2-A1's bounded evidence-language coverage
+remain limitations. No CS1-C, production ATS or frozen scenario changes are made.
+
+CS2-A2 validation: 237 deterministic/mock tests passed, comprising 34 new runner
+integration/audit tests and 203 existing runner, CS2-A1 and CS1-A/B/C tests.
+Structural checks confirmed unchanged existing CS2 proposal/guard/helper bodies
+and unchanged TurnTrace, PublicRunRecord, TechnicalFailure, TechnicalTermination
+and RunTiming contracts. Only the five approved CS2-A2 files changed.

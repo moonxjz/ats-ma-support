@@ -29,6 +29,11 @@ from evaluation.static_product_knowledge import (
     StaticProductKnowledge, load_static_product_knowledge, provide_support_knowledge,
 )
 
+from evaluation.llm_simulator_integration import (
+    SimulatorMetadata, SimulatorDiagnostics, SimulatorAttemptTrace, SimulatorSummary,
+    SimulatorFailure, PublicApprovalAudit, summarize_attempts,
+)
+
 Count = Annotated[int, Field(ge=0)]
 Duration = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 Phase = Literal['SETUP', 'PROVIDER', 'RUNTIME', 'SIMULATOR', 'RUNNER_INTEGRITY', 'OUTPUT']
@@ -115,6 +120,26 @@ class TurnTrace(PublicContract):
     )
 
 
+class SimulatorAttemptEvent(PublicContract):
+    kind: Literal['SIMULATOR_ATTEMPT'] = 'SIMULATOR_ATTEMPT'
+    attempt: SimulatorAttemptTrace
+
+
+class RuntimeTurnEvent(PublicContract):
+    kind: Literal['RUNTIME_TURN'] = 'RUNTIME_TURN'
+    simulator_attempt_index: Count
+    turn: TurnTrace
+
+
+class TerminationEvent(PublicContract):
+    kind: Literal['TERMINATION'] = 'TERMINATION'
+    termination: Termination
+    simulator_attempt_index: Count | None = None
+
+
+TraceEvent = Annotated[SimulatorAttemptEvent | RuntimeTurnEvent | TerminationEvent, Field(discriminator='kind')]
+
+
 class RunTiming(PublicContract):
     full_run_elapsed: Duration
     provider_elapsed: Duration
@@ -149,6 +174,8 @@ class ExperimentRunResult(PublicContract):
     timing: RunTiming
     outputs: OutputReferences
     secondary_failures: tuple[TechnicalFailure, ...] = ()
+    simulator_summary: SimulatorSummary | None = Field(default=None, exclude_if=lambda value: value is None)
+    simulator_attempts: tuple[SimulatorAttemptTrace, ...] = Field(default=(), exclude=True)
 
     @model_validator(mode='after')
     def consistent_counts(self) -> Self:
@@ -255,6 +282,24 @@ def _append_trace(path: Path, trace: TurnTrace) -> None:
         stream.flush()
 
 
+def _append_event(path: Path, event: TraceEvent) -> None:
+    with path.open('a', encoding='utf-8') as stream:
+        stream.write(event.model_dump_json() + '\n')
+        stream.flush()
+
+
+def _simulator_failure(attempt: SimulatorAttemptTrace) -> TechnicalFailure:
+    # Detailed exception strings can quote raw proposals. Keep them in attempts.
+    return TechnicalFailure(phase='SIMULATOR', exception_type=attempt.failure.exception_type,
+        message=f'CS2 {attempt.failure.code}; see simulator attempt {attempt.attempt_index}')
+
+
+def _recording_failure(exc: Exception) -> TechnicalFailure:
+    # Encoding/serialization exceptions can themselves quote raw model data.
+    return TechnicalFailure(phase='OUTPUT', exception_type=type(exc).__name__,
+        message='CS2 recording/output failed; available attempt diagnostics remain in memory')
+
+
 def _business(session: ConversationSession, traces: list[TurnTrace]) -> BusinessTerminalObservation:
     for trace in reversed(traces):
         failure = trace.technical_failure
@@ -280,6 +325,8 @@ def run_scenario(
     knowledge: StaticProductKnowledge | None = None,
     architecture: str = 'A3', execution_factory: Callable[[Path], Callable] | None = None,
     simulator: Callable = step, knowledge_provider: Callable = provide_support_knowledge,
+    simulator_metadata: SimulatorMetadata | None = None,
+    simulator_diagnostics: Callable[[], SimulatorDiagnostics] | None = None,
 ) -> ExperimentRunResult:
     """Run one isolated trajectory, with no retries and no post-run scoring.
 
@@ -287,6 +334,12 @@ def run_scenario(
     Existing directories and default-store paths are rejected before any write.
     Setup preparation errors outside this call propagate without a run directory.
     """
+    if (simulator_metadata is None) != (simulator_diagnostics is None):
+        raise ValueError('Simulator metadata and diagnostics must be supplied together')
+    recording = simulator_metadata is not None
+    if recording:
+        simulator_metadata = SimulatorMetadata.model_validate(simulator_metadata)
+    simulator_attempts = []
     directory = Path(run_directory).resolve()
     store = directory / 'orders.json'
     if store.resolve() == DEFAULT_ORDER_STORE_PATH.resolve():
@@ -321,16 +374,54 @@ def run_scenario(
         execute = (execution_factory or a3_execution)(store)
         customer = scenario.customer_view()
         phase = 'OUTPUT'
-        _write_json(Path(outputs.manifest), dict(run_id=run_id, scenario_id=scenario.scenario_id,
+        manifest = dict(run_id=run_id, scenario_id=scenario.scenario_id,
             architecture=architecture, fixtures=scenario.fixtures.model_dump(mode='json'),
             development_customer_message_safeguard=MAX_CUSTOMER_MESSAGES,
             measurement_scope='development observations; no token accounting',
-            support_model='qwen3:8b', think=False, sampling_options='existing component defaults'))
+            support_model='qwen3:8b', think=False, sampling_options='existing component defaults')
+        if recording:
+            manifest['simulator'] = simulator_metadata.model_dump(mode='json')
+        _write_json(Path(outputs.manifest), manifest)
         while termination is None:
             phase = 'SIMULATOR'
-            proposal = simulator(CustomerSimulatorInput(customer=customer, state=state, public_history=history))
-            # Validate the returned contract before adopting any state or message.
-            proposal = SimulatorStep.model_validate(proposal)
+            inputs = CustomerSimulatorInput(customer=customer, state=state, public_history=history)
+            if recording:
+                simulator_error = None
+                proposal = None
+                start = perf_counter()
+                try:
+                    proposal = SimulatorStep.model_validate(simulator(inputs))
+                except Exception as exc:
+                    simulator_error = exc
+                elapsed = perf_counter() - start
+                phase = 'RUNNER_INTEGRITY'
+                diagnostics = SimulatorDiagnostics.model_validate(simulator_diagnostics())
+                if simulator_error is not None and diagnostics.failure is None:
+                    diagnostics = SimulatorDiagnostics(**{
+                        **diagnostics.model_dump(), 'guard_outcome': 'NOT_REACHED',
+                        'failure': SimulatorFailure(code='UNEXPECTED_EXCEPTION',
+                            exception_type=type(simulator_error).__name__, message=str(simulator_error)),
+                    })
+                if simulator_error is None and diagnostics.failure is not None:
+                    raise ValueError('Diagnostics claim failure for an accepted simulator result')
+                stopped = proposal is not None and isinstance(proposal.decision, StopDecision)
+                attempt = SimulatorAttemptTrace(**{name: getattr(diagnostics, name) for name in type(diagnostics).model_fields},
+                    attempt_index=len(simulator_attempts), input_history_length=len(history), elapsed=elapsed,
+                    outcome='FAILURE' if simulator_error is not None else 'PUBLIC_STOP' if stopped else 'CUSTOMER_TURN',
+                    rendered_customer_message=proposal.decision.message if simulator_error is None and not stopped else None,
+                    stop_decision=proposal.decision if simulator_error is None and stopped else None)
+                simulator_attempts.append(attempt)
+                if simulator_error is not None:
+                    termination = TechnicalTermination(failure=_simulator_failure(attempt))
+                phase = 'OUTPUT'
+                _append_event(Path(outputs.trace), SimulatorAttemptEvent(attempt=attempt))
+                if simulator_error is not None:
+                    break
+                phase = 'SIMULATOR'
+            else:
+                proposal = simulator(inputs)
+                # Validate before adopting any state or message (legacy CS1).
+                proposal = SimulatorStep.model_validate(proposal)
             if isinstance(proposal.decision, StopDecision):
                 state = proposal.state
                 termination = PublicStop(decision=proposal.decision)
@@ -399,9 +490,13 @@ def run_scenario(
                 trace = TurnTrace(**trace_values)
                 traces.append(trace)
             phase = 'OUTPUT'
-            _append_trace(Path(outputs.trace), trace)
+            if recording:
+                _append_event(Path(outputs.trace), RuntimeTurnEvent(
+                    simulator_attempt_index=simulator_attempts[-1].attempt_index, turn=trace))
+            else:
+                _append_trace(Path(outputs.trace), trace)
     except Exception as exc:
-        failure = _failure(phase, exc)
+        failure = _recording_failure(exc) if recording and phase == 'OUTPUT' else _failure(phase, exc)
         if termination is not None:
             secondary.append(failure)
         else:
@@ -426,15 +521,21 @@ def run_scenario(
         business_terminal_observation=_business(session, traces), traces=tuple(traces),
         timing=RunTiming(full_run_elapsed=perf_counter()-started,
             provider_elapsed=sum(t.provider_elapsed for t in traces), runtime_elapsed=sum(t.runtime_elapsed for t in traces)),
-        outputs=outputs, secondary_failures=tuple(secondary))
+        outputs=outputs, secondary_failures=tuple(secondary),
+        simulator_summary=summarize_attempts(simulator_attempts) if recording else None,
+        simulator_attempts=tuple(simulator_attempts))
     try:
         _write_json(Path(outputs.public_history), result.public_record.model_dump(mode='json'))
         _write_json(Path(outputs.result), result.model_dump(mode='json', exclude={'traces'}))
         # A terminal event also exists for zero-turn public stops/setup failures.
-        with Path(outputs.trace).open('a', encoding='utf-8') as stream:
-            stream.write(json.dumps({'terminal': result.termination.model_dump(mode='json')}, ensure_ascii=False)+'\n')
+        if recording:
+            _append_event(Path(outputs.trace), TerminationEvent(termination=result.termination,
+                simulator_attempt_index=simulator_attempts[-1].attempt_index if simulator_attempts else None))
+        else:
+            with Path(outputs.trace).open('a', encoding='utf-8') as stream:
+                stream.write(json.dumps({'terminal': result.termination.model_dump(mode='json')}, ensure_ascii=False)+'\n')
     except Exception as exc:
-        failure = _failure('OUTPUT', exc)
+        failure = _recording_failure(exc) if recording else _failure('OUTPUT', exc)
         result = ExperimentRunResult(**{**{k:getattr(result,k) for k in type(result).model_fields},
             'secondary_failures': (*result.secondary_failures, failure)})
     return result
@@ -442,8 +543,20 @@ def run_scenario(
 
 def validate_pilot_result(
     result: ExperimentRunResult, *, customer: CustomerScenario, expectations: EvaluationExpectations,
+    artifact_verifier: Callable | None = None,
 ) -> PilotValidationResult:
     """Post-run pilot consistency only. Never reads or scores paper invariants."""
+    if result.simulator_summary is not None and artifact_verifier is None:
+        return PilotValidationResult(verdict='FAIL', checks=(PilotCheck(
+            name='cs2_verifier_required', status='FAIL',
+            explanation='Declared CS2 results require an explicit public-approval verifier.'),))
+    audit = None
+    if artifact_verifier is not None:
+        try:
+            audit = PublicApprovalAudit.model_validate(artifact_verifier(
+                result.public_record.public_history, customer=customer))
+        except (ValueError, TypeError, IndexError):
+            audit = PublicApprovalAudit(errors=('PUBLIC_APPROVAL_AUDIT_FAILED',))
     checks = []
     def check(name, condition, explanation, refs=()):
         checks.append(PilotCheck(name=name, status='UNKNOWN' if condition is None else 'PASS' if condition else 'FAIL',
@@ -490,7 +603,15 @@ def validate_pilot_result(
                 ref = approvals[0].artifact
                 try:
                     ref.resolve(result.public_record.public_history)
-                    artifact = observe_public_response(result.public_record.public_history[ref.message_index].text,ref.message_index).artifact
+                    if audit is None:
+                        artifact = observe_public_response(result.public_record.public_history[ref.message_index].text,ref.message_index).artifact
+                    else:
+                        verified = [a for a in audit.approvals if a.receipt.kind == 'FINAL_ORDER'
+                                    and a.artifact.evidence == ref
+                                    and a.receipt.customer_message_index == 2 * first.attempt_index]
+                        artifact = verified[0].artifact if len(verified) == 1 else None
+                        if artifact is None and (audit.errors or not audit.incomplete):
+                            artifact_matches = False
                     if artifact and artifact.evidence == ref and artifact.approval_request:
                         artifact_matches = True
                         for item in artifact.values:
@@ -507,8 +628,19 @@ def validate_pilot_result(
     check('persisted_matches_public_approval', artifact_matches,
           'Compare displayed fields in the final approval dispatched before the order first appeared; unavailable association is UNKNOWN.')
     receipts = result.final_customer_simulator_state.approval_receipts
-    check('configuration_approved', any(r.kind == 'CONFIGURATION' for r in receipts), 'Customer-side configuration approval receipt exists.')
-    check('final_order_approved', any(r.kind == 'FINAL_ORDER' for r in receipts), 'Customer-side placement approval receipt exists.')
+    if audit is None:
+        check('configuration_approved', any(r.kind == 'CONFIGURATION' for r in receipts), 'Customer-side configuration approval receipt exists.')
+        check('final_order_approved', any(r.kind == 'FINAL_ORDER' for r in receipts), 'Customer-side placement approval receipt exists.')
+    else:
+        verified_receipts = tuple(a.receipt for a in audit.approvals)
+        check('public_approval_audit', not audit.errors,
+              'Public artifacts, requests, customer facts and following confirmations are independently verified.')
+        check('approval_receipts_match_public', receipts == verified_receipts,
+              'Saved receipts must exactly match independently reconstructed public approvals.')
+        for kind, name in (('CONFIGURATION', 'configuration_approved'), ('FINAL_ORDER', 'final_order_approved')):
+            found = any(r.kind == kind for r in verified_receipts)
+            check(name, found if found or audit.errors or not audit.incomplete else None,
+                  'Approval requires verified public evidence, never workflow flags or saved guard verdicts.')
     actions = [a for t in result.traces if t.dispatched for a in t.customer_turn.actions]
     discovery = customer.conversation_policy.configuration_selection
     if discovery is None:

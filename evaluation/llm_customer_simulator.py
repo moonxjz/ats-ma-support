@@ -4,6 +4,9 @@ No live client is imported. No runner, persistence, catalogue, evaluator, or ATS
 state is accessible through this module's input contract. Failures never retry.
 """
 import json
+from dataclasses import dataclass
+from hashlib import sha256
+from time import perf_counter
 from typing import Annotated, Callable, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -26,6 +29,16 @@ class CS2Failure(ValueError):
     def __init__(self, code, message):
         self.code = code
         super().__init__(message)
+
+
+@dataclass
+class ProposalDiagnostics:
+    """Observations only; never read by parsing, authorization or rendering."""
+    input_sha256: str | None = None
+    model_calls: int = 0
+    model_elapsed: float | None = None
+    raw_model_content: str | None = None
+    parsed_proposal: object = None
 
 
 class TextValue(PublicContract):
@@ -493,13 +506,17 @@ def _authorize(inputs, proposal):
                  pending_requests=tuple(r for r in all_requests if r.field not in fulfilled), pending_discovery=new_pending)
 
 
-def step(inputs: CustomerSimulatorInput, *, chat_fn: Callable) -> SimulatorStep:
+def step(inputs: CustomerSimulatorInput, *, chat_fn: Callable,
+         diagnostics: ProposalDiagnostics | None = None) -> SimulatorStep:
     """One proposal call; caller alone owns dispatch and state adoption."""
     try:
         payload = build_payload(inputs)
         _validate_state(inputs.customer, inputs.state, inputs.public_history)
     except (ValueError, TypeError, IndexError) as exc:
         raise CS2Failure('INVALID_INPUT', str(exc)) from exc
+    if diagnostics is not None:
+        diagnostics.input_sha256 = sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
+            separators=(',', ':'), allow_nan=False).encode('utf-8')).hexdigest()
     customer, state, history = inputs.customer, inputs.state, inputs.public_history
     if state.stop_decision:
         return SimulatorStep(decision=state.stop_decision, state=state)
@@ -513,12 +530,29 @@ def step(inputs: CustomerSimulatorInput, *, chat_fn: Callable) -> SimulatorStep:
         return _turn(customer, state, (InitialMessage(),), disclosed_fields=customer.initial_disclosures,
                      pending_discovery=PendingDiscovery(field=field, question_kind='AVAILABLE_OPTIONS', customer_message_index=0) if field else None)
     try:
+        if diagnostics is not None:
+            diagnostics.model_calls += 1
+        model_started = perf_counter()
         response = chat_fn(model='qwen3:8b', think=False, stream=False,
                            messages=[{'role': 'system', 'content': SYSTEM_PROMPT},
                                      {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)}],
                            format=ProposalEnvelope.model_json_schema(), options={'temperature': 0, 'seed': 0})
     except Exception as exc:
         raise CS2Failure('MODEL_FAILURE', str(exc)) from exc
+    finally:
+        if diagnostics is not None:
+            diagnostics.model_elapsed = perf_counter() - model_started
+    if diagnostics is not None:
+        # Capture content even when response metadata causes rejection below.
+        # Missing content is observed as unavailable, never repaired.
+        # Read ordinary response storage, not properties a second time. This
+        # side channel must not change the response access performed below.
+        try:
+            message = vars(response).get('message')
+            raw = vars(message).get('content')
+        except TypeError:
+            raw = None
+        diagnostics.raw_model_content = raw if type(raw) is str else None
     try:
         if getattr(response, 'done', True) is False or getattr(response, 'done_reason', None) == 'length':
             raise ValueError('Incomplete model response')
@@ -528,6 +562,8 @@ def step(inputs: CustomerSimulatorInput, *, chat_fn: Callable) -> SimulatorStep:
     except (ValueError, AttributeError, TypeError) as exc:
         raise CS2Failure('INVALID_PROPOSAL', str(exc)) from exc
     proposal = parse_proposal(content)
+    if diagnostics is not None:
+        diagnostics.parsed_proposal = proposal
     try:
         return _authorize(inputs, proposal)
     except (ValueError, TypeError, IndexError) as exc:
