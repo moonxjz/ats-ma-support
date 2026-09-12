@@ -495,7 +495,8 @@ from evaluation.llm_simulator_integration import (
 def proposed_reply(**kwargs):
     """Mock proposer reads only the actual customer/public prompt payload."""
     payload = json.loads(kwargs['messages'][1]['content'])
-    customer = cs2.CustomerSimulatorInput.model_validate_json(json.dumps(payload)).customer
+    from evaluation.scenario_spec import CustomerScenario
+    customer = CustomerScenario.model_validate_json(json.dumps(payload['customer']))
     text = payload['public_history'][-1]['text']
     index = len(payload['public_history']) - 1
     artifact = cs2_evidence.extract_artifact(text, index)
@@ -503,17 +504,17 @@ def proposed_reply(**kwargs):
         request = cs2_evidence.approval_requests(text, index, artifact)[0]
         proposal = {'kind': 'CUSTOMER_TURN', 'actions': [{
             'kind': 'CONFIRM_CONFIGURATION' if artifact.kind == 'CONFIGURATION' else 'CONFIRM_FINAL_ORDER',
-            'artifact': artifact.evidence.model_dump(mode='json'),
-            'approval_request': request.model_dump(mode='json')}]}
+            'artifact': artifact.evidence.model_dump(mode='json', include={'message_index', 'quote'}),
+            'approval_request': request.model_dump(mode='json', include={'message_index', 'quote'})}]}
     elif 'has been created' in text:
         proposal = {'kind': 'STOP', 'category': 'ORDER_CREATED',
-                    'evidence': [cs2_evidence.reference(text, index).model_dump(mode='json')]}
+                    'evidence': [cs2_evidence.reference(text, index).model_dump(mode='json', include={'message_index', 'quote'})]}
     else:
         items = []
         for request in cs2_evidence.requested_fields(text, index):
             value = cs2.customer_value(customer, request.field)
             typed = {'kind': 'ABSENT'} if value is None else {'kind': 'QUANTITY' if type(value) is int else 'TEXT', 'value': value}
-            items.append({'field': request.field, 'value': typed, 'request_evidence': [request.evidence.model_dump(mode='json')]})
+            items.append({'field': request.field, 'value': typed, 'request_evidence': [request.evidence.model_dump(mode='json', include={'message_index', 'quote'})]})
         proposal = {'kind': 'CUSTOMER_TURN', 'actions': [{'kind': 'PROVIDE_INFORMATION', 'items': items}]}
     return SimpleNamespace(message=SimpleNamespace(content=json.dumps({'proposal': proposal}), thinking='DO_NOT_RECORD_THINKING'), done=True)
 

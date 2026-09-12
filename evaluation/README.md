@@ -793,8 +793,11 @@ chat_fn(
 ```
 
 The payload has exactly `customer`, `state`, and `public_history`, reconstructed
-from the strict shared customer-only input. JSON serialization uses sorted keys,
-compact separators, original Unicode text, and no nonfinite numbers. Latest
+from the strict shared customer-only input. CS2-A1.1 serialization fixes the
+top-level order to customer, state, public_history; nested keys are sorted, with
+compact separators, original Unicode text, and no nonfinite numbers. Each public
+message adds its explicit zero-based message_index, equal to its array position.
+The shared input itself is unchanged. No parser-derived action hints are added. Latest
 Support text is derived from history. Full ScenarioSpec, evaluator expectations,
 architecture/run labels, ATS state/results/routing, persistence and Support
 knowledge objects are never inputs. Public transcript content is untrusted data;
@@ -849,6 +852,45 @@ are copied into wording: the shared renderer resolves customer truth itself.
 Initial, selection, optional-absence, discovery and confirmation wording remains
 CS1 wording. A1 performs no free-form generated-customer-text consistency parsing.
 LLM customer wording belongs to a separately approved future CS2-B.
+
+### CS2-A1.1 proposal grounding refinement
+
+LLM evidence fields now use strict `EvidenceSelector(message_index, quote)` across
+all action variants and STOP. Extra start/end properties are INVALID_PROPOSAL.
+Generic proposal contracts instantiate selectors for `ProposalEnvelope` and
+canonical EvidenceRefs for `GroundedProposalEnvelope`, keeping the same action,
+value and bundle constraints on both sides of grounding.
+
+`resolve_selector` validates the selector, checks the indexed message exists and
+is assistant-role, and searches only that message for the unmodified quote. Zero
+matches reject; a second match searched from first_start + 1 rejects even
+overlapping occurrences. One match produces canonical start/end via Python
+Unicode string indexing and constructs/resolves EvidenceRef. No fuzzy matching,
+normalization, trimming, semantic search, cross-message search or repair occurs.
+Malformed selector syntax is INVALID_PROPOSAL; absent/ambiguous/wrong-role quotes
+and subsequent context/semantic violations are GUARD_REJECTED. Grounding never
+establishes authorization: the existing action-specific guards run afterward.
+
+The prompt now starts with the current public situation, explicitly maps
+user/customer and assistant/Support, and separates private truth/conditional
+policy from public evidence. Confirmation willingness is conditional, not the
+next action. It names both required artifacts and scoped requests and rejects
+customer order descriptions, ordinary information requests, option lists and
+general review wording as substitutes. Pending discovery remains binding.
+Schema descriptions repeat generic prerequisites for all six action types and
+STOP. No full-name special case, scenario/architecture branch, expected-action
+field, or public-parser-derived artifact flag is introduced.
+
+Historical `S01_A3_CS2_47d9f55_pilot_001` remains unchanged FAIL evidence. Its exact
+old input fingerprint and raw invalid offset proposal have deterministic tests.
+The two quotes have lengths 167 and 40, not the proposed 245 and 34. Removing
+offsets does not authorize confirmation: the initial message has the wrong role;
+using the current Support name request as artifact also fails semantic checks.
+The correct information selector derives message 1 [0,40), authorizes the name
+field, and renders exactly `My name is Demo1 Customer1.` No live rerun occurred.
+Future live work requires separate approval, a new committed revision and run
+directory, and pilot_002. Quote selectors reduce coordinate errors but do not
+prevent wrong semantic proposals or extend the bounded public-language grammar.
 
 ### Public evidence coverage and limits
 
@@ -980,7 +1022,8 @@ example is mocked assembly only.
 
 CS2-A1 `step` now accepts optional `diagnostics: ProposalDiagnostics`. It only
 writes observations: canonical input fingerprint, model call count/duration, raw
-content and the actual parsed proposal. Parsing and authorization never read
+content, the actual parsed selector proposal and successfully grounded canonical
+references (including a partial prefix if later grounding fails). Parsing and authorization never read
 these observations. The adapter snapshots them on both return and exception,
 without repair or retry. Regression tests compare enabled/disabled diagnostics
 for accepted turns, public stops, invalid input/output, guard rejection and model
@@ -1006,14 +1049,20 @@ model inputs.
 - `attempt_index`, `input_history_length`, optional `input_sha256`, total `elapsed`;
 - `model_calls` (0 or 1), optional `model_elapsed`;
 - optional `raw_model_content`, optional `parsed_proposal_json`;
+- optional `grounded_evidence`, canonical references in traversal order (omitted when empty);
 - `guard_outcome`: NOT_REACHED, ACCEPTED, REJECTED or BYPASSED;
 - `outcome`: CUSTOMER_TURN, PUBLIC_STOP or FAILURE;
 - optional `rendered_customer_message`, `stop_decision`, `failure`.
 
 `SimulatorFailure` records code, exception type and detailed diagnostic message.
-Its codes are the four CS2-A1 codes plus UNEXPECTED_EXCEPTION. Proposed evidence
-refs remain inside the parsed proposal snapshot; refs in rejected proposals are
-unverified claims. No separate duplicated reference list is stored.
+Its codes are the four CS2-A1 codes plus UNEXPECTED_EXCEPTION. Proposal-side
+selectors remain inside the actual parsed proposal snapshot. `grounded_evidence`
+retains only successfully resolved canonical references, including a partial
+prefix on failure; it is not an authorization verdict and missing references are
+never fabricated. The CS2 adapter copies this observation without changing the
+runner. This optional diagnostic field preserves the CS2-2 event vocabulary and
+can be absent in older traces. Old raw/parsed proposals are not converted to the
+new selector syntax; source/prompt/schema hashes distinguish revisions.
 
 CUSTOMER_TURN attempts contain the rendered message but not a duplicate accepted
 CustomerTurn or proposed state. The existing `TurnTrace` is the authoritative

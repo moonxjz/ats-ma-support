@@ -6,16 +6,46 @@ verified constructions. Unknown material framing fails closed. No ATS/catalog I/
 import html
 import json
 import re
+from typing import Annotated
+from pydantic import Field
+from evaluation.scenario_spec import Nonblank
 
 from confirmation_presentation import ADDRESS_FIELDS, CONFIG_FIELDS, CUSTOMER_FIELDS, PRICE_FIELDS
 from evaluation.public_observation import (
-    ArtifactValue, AvailabilityEvidence, EvidenceRef, FIELD_LABELS, LABEL_FIELDS,
+    ArtifactValue, AvailabilityEvidence, EvidenceRef, FIELD_LABELS, LABEL_FIELDS, PublicContract,
     PublicArtifact, RequestedFieldEvidence, TOPICS,
 )
 
 
 class EvidenceError(ValueError):
     """Public evidence is absent, ambiguous, conflicting, or unsupported."""
+
+
+class EvidenceSelector(PublicContract):
+    """Exact quote in one indexed Support message; location is not authorization."""
+    message_index: Annotated[int, Field(ge=0)]
+    quote: Nonblank
+
+
+def resolve_selector(selector: EvidenceSelector, history) -> EvidenceRef:
+    """Resolve exactly once in the specified assistant message, without repair."""
+    if type(selector) is not EvidenceSelector:
+        raise EvidenceError('Expected exact EvidenceSelector')
+    selector = EvidenceSelector.model_validate_json(selector.model_dump_json())
+    if selector.message_index >= len(history):
+        raise EvidenceError('Evidence message is absent from public history')
+    message = history[selector.message_index]
+    if message.role != 'assistant':
+        raise EvidenceError('Evidence requires a Support message')
+    start = message.text.find(selector.quote)
+    if start < 0:
+        raise EvidenceError('Evidence quote is absent from referenced message')
+    if message.text.find(selector.quote, start + 1) >= 0:
+        raise EvidenceError('Evidence quote is ambiguous in referenced message')
+    ref = EvidenceRef(message_index=selector.message_index, start=start,
+                      end=start + len(selector.quote), quote=selector.quote)
+    ref.resolve(history)
+    return ref
 
 
 def reference(text, index, start=0, end=None):

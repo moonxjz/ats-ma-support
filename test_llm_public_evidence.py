@@ -12,6 +12,59 @@ class EvidenceTests(unittest.TestCase):
     def setUpClass(cls):
         cls.customer = load_scenarios(check_repository=False)[0].customer_view()
 
+    def resolve(self, text, quote, index=0, role='assistant'):
+        return e.resolve_selector(e.EvidenceSelector(message_index=index, quote=quote),
+            (PublicMessage(role=role, text=text),))
+
+    def test_selector_unique_exact_match(self):
+        ref = self.resolve('Before. Please provide your email. After.', 'Please provide your email.')
+        self.assertEqual((ref.start, ref.end, ref.quote), (8, 34, 'Please provide your email.'))
+
+    def test_selector_zero_match_no_cross_message_search(self):
+        with self.assertRaisesRegex(e.EvidenceError, 'absent'):
+            e.resolve_selector(e.EvidenceSelector(message_index=0, quote='here'),
+                (PublicMessage(role='assistant', text='absent'), PublicMessage(role='assistant', text='here')))
+
+    def test_selector_repeated_match(self):
+        with self.assertRaisesRegex(e.EvidenceError, 'ambiguous'):
+            self.resolve('yes yes', 'yes')
+
+    def test_selector_overlapping_matches(self):
+        with self.assertRaisesRegex(e.EvidenceError, 'ambiguous'):
+            self.resolve('ababa', 'aba')
+
+    def test_selector_wrong_message_index(self):
+        with self.assertRaisesRegex(e.EvidenceError, 'absent'):
+            self.resolve('hello', 'hello', index=1)
+
+    def test_selector_wrong_role(self):
+        with self.assertRaisesRegex(e.EvidenceError, 'Support'):
+            self.resolve('hello', 'hello', role='user')
+
+    def test_selector_unicode_python_indices(self):
+        ref = self.resolve('🙂 café — e\u0301!', 'café — e\u0301')
+        self.assertEqual((ref.start, ref.end), (2, 11))
+        with self.assertRaises(e.EvidenceError):
+            self.resolve('café', 'cafe\u0301')
+
+    def test_selector_whitespace_and_punctuation_sensitive(self):
+        for quote in ('Please provide your name.', 'Please  provide your name?', ' please  provide your name. '):
+            with self.subTest(quote=quote), self.assertRaises(e.EvidenceError):
+                self.resolve(' Please  provide your name. ', quote)
+        ref = self.resolve(' Please  provide your name. ', ' Please  provide your name. ')
+        self.assertEqual(ref.start, 0)
+        self.assertEqual(ref.end, 28)
+
+    def test_selector_strict_syntax_and_type(self):
+        from pydantic import ValidationError
+        for value in ({'message_index': 0, 'quote': ' '}, {'message_index': True, 'quote': 'x'},
+                      {'message_index': '0', 'quote': 'x'}, {'message_index': -1, 'quote': 'x'},
+                      {'message_index': 0, 'quote': 'x', 'start': 0, 'end': 1}):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                e.EvidenceSelector.model_validate(value)
+        with self.assertRaises(e.EvidenceError):
+            e.resolve_selector({'message_index': 0, 'quote': 'x'}, ())
+
     def test_reference_unicode_original_offsets(self):
         text = 'Thanks — welcome. Marri is available.'
         ref = tuple(e.units(text, 1))[1]

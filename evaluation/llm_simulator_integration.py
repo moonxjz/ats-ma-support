@@ -15,7 +15,7 @@ from evaluation.customer_simulator import (
     ApprovalReceipt, ConfirmConfiguration, ConfirmFinalOrder,
     SelectOption, StopDecision, customer_value,
 )
-from evaluation.public_observation import PublicArtifact, PublicContract, PublicMessage
+from evaluation.public_observation import EvidenceRef, PublicArtifact, PublicContract, PublicMessage
 from evaluation.scenario_spec import CONFIGURATION_FIELDS, CustomerScenario, Nonblank
 
 Count = Annotated[int, Field(ge=0)]
@@ -81,6 +81,7 @@ class SimulatorDiagnostics(PublicContract):
     model_elapsed: Duration | None = None
     raw_model_content: str | None = None
     parsed_proposal_json: str | None = None
+    grounded_evidence: tuple[EvidenceRef, ...] = Field(default=(), exclude_if=lambda value: not value)
     guard_outcome: Literal['NOT_REACHED', 'ACCEPTED', 'REJECTED', 'BYPASSED']
     failure: SimulatorFailure | None = None
 
@@ -106,7 +107,7 @@ class SimulatorAttemptTrace(SimulatorDiagnostics):
             raise ValueError('Runner attempts consume completed public pairs')
         if (self.model_calls == 0) != (self.model_elapsed is None):
             raise ValueError('Model timing must match actual call presence')
-        if self.model_calls == 0 and (self.raw_model_content is not None or self.parsed_proposal_json is not None):
+        if self.model_calls == 0 and (self.raw_model_content is not None or self.parsed_proposal_json is not None or self.grounded_evidence):
             raise ValueError('A bypass cannot contain model output')
         if self.outcome == 'CUSTOMER_TURN':
             if self.rendered_customer_message is None or self.stop_decision or self.failure:
@@ -185,7 +186,7 @@ class LLMSimulator:
             self._last = SimulatorDiagnostics(input_sha256=capture.input_sha256, model_calls=capture.model_calls,
                 model_elapsed=capture.model_elapsed, raw_model_content=capture.raw_model_content,
                 parsed_proposal_json=capture.parsed_proposal.model_dump_json() if capture.parsed_proposal is not None else None,
-                guard_outcome=guard, failure=failure)
+                grounded_evidence=capture.grounded_evidence, guard_outcome=guard, failure=failure)
 
     def take_diagnostics(self):
         if self._last is None:
