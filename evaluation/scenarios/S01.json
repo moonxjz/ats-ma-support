@@ -1,0 +1,116 @@
+{
+  "schema_version": "1",
+  "scenario_id": "S01",
+  "name": "Complete Configuration Upfront",
+  "customer": {
+    "product_knowledge": "INFORMED",
+    "description": "    - Customer knows the complete desired product configuration.\n    - Customer provides all configuration selections in the initial message.\n    - Remaining required customer, delivery, and room information is provided when requested.\n    - Initial configuration is valid.\n    - Configuration confirmation is accepted without modification.\n    - Final confirmation is accepted without modification.",
+    "ground_truth": {
+      "customer": {
+        "customer_name": "Demo1 Customer1",
+        "phone": "0400000001",
+        "email": "customer1@example.com"
+      },
+      "delivery_address": {
+        "address": "1 Example Street",
+        "city": "Melbourne",
+        "state": "VIC",
+        "postcode": "3000",
+        "country": "Australia"
+      },
+      "room_size": "5.3m x 4.1m",
+      "configuration": {
+        "product_model": "Odyssey",
+        "table_size": "8ft",
+        "timber": "Tassie Oak",
+        "timber_painting": "Natural",
+        "felt_color": "Blue",
+        "bracket": "Brass",
+        "top_profile": "Waterfall",
+        "quantity": 1
+      }
+    },
+    "initial_message": " I'd like to order one 8ft Odyssey pool table with a Waterfall top rail profile and brass bracket. For timber, I'd like   Tassie Oak in Natural finish, with Blue felt.",
+    "initial_disclosures": [
+      "product_model",
+      "table_size",
+      "timber",
+      "timber_painting",
+      "felt_color",
+      "bracket",
+      "top_profile",
+      "quantity"
+    ],
+    "initially_known_configuration_fields": [
+      "product_model",
+      "table_size",
+      "timber",
+      "timber_painting",
+      "felt_color",
+      "bracket",
+      "top_profile"
+    ],
+    "conversation_policy": {
+      "configuration_confirmation": {
+        "behavior": "CONFIRM_WITHOUT_CHANGE",
+        "requires_visible_artifact": true,
+        "requires_explicit_confirmation_request": true,
+        "requires_artifact_matches_ground_truth": true
+      },
+      "final_confirmation": {
+        "behavior": "CONFIRM_WITHOUT_CHANGE",
+        "requires_visible_artifact": true,
+        "requires_explicit_confirmation_request": true,
+        "requires_artifact_matches_ground_truth": true
+      },
+      "subsequent_disclosure": "ANSWER_REQUESTED_INFORMATION"
+    }
+  },
+  "initial_state": {
+    "workflow_state": null,
+    "existing_order": null
+  },
+  "fixtures": {
+    "product_catalog": {
+      "path": "data/product_prices.json",
+      "sha256": "ef8ac04e8ac00a6690f60ecd53b4418fbc4bdd3ccc2d527e65cdb2afdb9cc007"
+    },
+    "shipping": {
+      "path": "data/shipping_rates.json",
+      "sha256": "933d9ef7ac2910e74642f874e30a78be97935a48a19defe7f3d6f9ec72650cb3"
+    }
+  },
+  "evaluation": {
+    "system_derived": {
+      "product_sku": "B8ODYSSEY",
+      "pricing": {
+        "base_model_price": "5250",
+        "customisation_price": "1550",
+        "unit_price": "6800",
+        "shipping_cost": "530",
+        "total_price": "7330"
+      }
+    },
+    "workflow": {
+      "configuration_validation": "VALID",
+      "configuration_confirmation": "CONFIRMED",
+      "final_confirmation": "CONFIRMED"
+    },
+    "outcome": {
+      "result_status": "SUCCESS",
+      "reason": "ORDER_CREATED",
+      "workflow_status": "COMPLETED",
+      "committed_order_count": 1
+    },
+    "invariants": {
+      "I1": "SATISFIED",
+      "I2": "SATISFIED",
+      "I3": "SATISFIED",
+      "I4": "NOT_EXERCISED",
+      "I5": "SATISFIED",
+      "I6": "SATISFIED",
+      "I7": "NOT_EXERCISED",
+      "I8": "SATISFIED"
+    }
+  }
+}

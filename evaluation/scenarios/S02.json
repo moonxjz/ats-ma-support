@@ -1,0 +1,130 @@
+{
+  "schema_version": "1",
+  "scenario_id": "S02",
+  "name": "Partial-Knowledge Mixed Interaction",
+  "customer": {
+    "product_knowledge": "PARTIAL",
+    "description": "    - Customer intends to purchase a custom pool table.\n    - Customer already knows part of the desired product configuration\n      and provides those selections in the initial message.\n    - Customer does not initially know the available options for the\n      remaining configuration fields.\n    - When asked to choose an unfamiliar configuration field, the\n      customer first asks what options are available.\n    - After Support provides authoritative available options, the\n      customer selects the scenario-defined target option.\n    - Remaining required customer, delivery, and room information is\n      provided when requested.\n    - All final selections form a valid configuration.\n    - Configuration confirmation is accepted without modification.\n    - Final confirmation is accepted without modification.",
+    "ground_truth": {
+      "customer": {
+        "customer_name": "Demo2 Customer2",
+        "phone": "0400000002",
+        "email": "customer2@example.com"
+      },
+      "delivery_address": {
+        "address": "2 Example Street",
+        "city": "Canberra",
+        "state": "ACT",
+        "postcode": "2900",
+        "country": "Australia"
+      },
+      "room_size": "5.0m x 3.9m",
+      "configuration": {
+        "product_model": "Kings Cross",
+        "table_size": "7ft",
+        "timber": "Zebra",
+        "timber_painting": "Natural",
+        "felt_color": "Black",
+        "bracket": "Copper",
+        "top_profile": "Live-Edge",
+        "quantity": 1
+      }
+    },
+    "initial_message": "I'd like to order one 7ft Kings Cross pool table with a Live-Edge top rail profile and Copper bracket.",
+    "initial_disclosures": [
+      "product_model",
+      "table_size",
+      "bracket",
+      "top_profile",
+      "quantity"
+    ],
+    "initially_known_configuration_fields": [
+      "product_model",
+      "table_size",
+      "bracket",
+      "top_profile"
+    ],
+    "conversation_policy": {
+      "configuration_confirmation": {
+        "behavior": "CONFIRM_WITHOUT_CHANGE",
+        "requires_visible_artifact": true,
+        "requires_explicit_confirmation_request": true,
+        "requires_artifact_matches_ground_truth": true
+      },
+      "final_confirmation": {
+        "behavior": "CONFIRM_WITHOUT_CHANGE",
+        "requires_visible_artifact": true,
+        "requires_explicit_confirmation_request": true,
+        "requires_artifact_matches_ground_truth": true
+      },
+      "configuration_selection": {
+        "type": "MIXED_DIRECT_AND_DISCOVER",
+        "selection_constraints": {
+          "select_target_only_if_offered": true,
+          "if_target_not_offered": "ASK_ABOUT_TARGET_OPTION"
+        },
+        "discovery_fields": [
+          "timber",
+          "timber_painting",
+          "felt_color"
+        ],
+        "if_options_unknown": "ASK_AVAILABLE_OPTIONS"
+      },
+      "customer_information_when_requested": "PROVIDE_REQUESTED_INFORMATION",
+      "room_information_when_requested": "PROVIDE_GROUND_TRUTH_ROOM_SIZE"
+    }
+  },
+  "initial_state": {
+    "workflow_state": null,
+    "existing_order": null
+  },
+  "fixtures": {
+    "product_catalog": {
+      "path": "data/product_prices.json",
+      "sha256": "ef8ac04e8ac00a6690f60ecd53b4418fbc4bdd3ccc2d527e65cdb2afdb9cc007"
+    },
+    "shipping": {
+      "path": "data/shipping_rates.json",
+      "sha256": "933d9ef7ac2910e74642f874e30a78be97935a48a19defe7f3d6f9ec72650cb3"
+    }
+  },
+  "evaluation": {
+    "system_derived": {
+      "product_sku": "B7KINGX",
+      "pricing": {
+        "base_model_price": "5350",
+        "customisation_price": "1550",
+        "unit_price": "6900",
+        "shipping_cost": "1202",
+        "total_price": "8102"
+      }
+    },
+    "workflow": {
+      "configuration_validation": "VALID",
+      "configuration_confirmation": "CONFIRMED",
+      "final_confirmation": "CONFIRMED"
+    },
+    "outcome": {
+      "result_status": "SUCCESS",
+      "reason": "ORDER_CREATED",
+      "workflow_status": "COMPLETED",
+      "committed_order_count": 1
+    },
+    "invariants": {
+      "I1": "SATISFIED",
+      "I2": "SATISFIED",
+      "I3": "SATISFIED",
+      "I4": "NOT_EXERCISED",
+      "I5": "SATISFIED",
+      "I6": "SATISFIED",
+      "I7": "NOT_EXERCISED",
+      "I8": "SATISFIED"
+    },
+    "interaction_properties": {
+      "direct_selection_preserved": true,
+      "catalog_discovery_supported": true,
+      "active_workflow_general_enquiry_supported": true,
+      "workflow_continuity_after_enquiry": true
+    }
+  }
+}
