@@ -16,14 +16,30 @@ class ShippingTests(unittest.TestCase):
         self.payload = json.loads(SHIPPING_PATH.read_text())
 
     def test_fixture_matches_source_normalized_records(self):
-        # Digest independently derived from the owner's Excel source records.
+        # Pin the source records plus the approved postcode 2000 Sydney Metro addition.
         encoded = json.dumps(self.payload, sort_keys=True, separators=(",", ":")).encode()
         self.assertEqual(hashlib.sha256(encoded).hexdigest(),
-                         "c79e532624ebc7696dfe691df7f1f01afc6c22174431ca4bc3db4d8de4f780db")
-        self.assertEqual(len(self.payload["postcode_zones"]), 180)
+                         "591956368912ffd7f737d379a123b1acc26a2773918e10712723a5e5841df3b4")
+        self.assertEqual(len(self.payload["postcode_zones"]), 181)
         self.assertEqual(len(self.payload["rates"]), 36)
-        self.assertEqual(set(Counter(r["shipping_zone"] for r in self.payload["postcode_zones"]).values()), {20})
+        self.assertEqual(Counter(r["shipping_zone"] for r in self.payload["postcode_zones"]), {
+            "Sydney Metro": 21,
+            "Melbourne Metro": 20,
+            "Brisbane Metro": 20,
+            "Gold Coast": 20,
+            "Sunshine Coast": 20,
+            "Newcastle": 20,
+            "Perth Metro": 20,
+            "Adelaide Metro": 20,
+            "Canberra": 20,
+        })
         self.assertEqual({r["table_size_ft"] for r in self.payload["rates"]}, {6, 7, 8, 9})
+
+    def test_postcode_2000_8ft_uses_sydney_metro_rate(self):
+        self.assertEqual(lookup_shipping_rate("8ft", "2000"), {
+            "postcode": "2000", "matched": True, "shipping_zone": "Sydney Metro",
+            "per_table_shipping_rate": Decimal("1518"),
+        })
 
     def test_all_explicit_mappings_and_rates(self):
         for mapping in self.payload["postcode_zones"]:

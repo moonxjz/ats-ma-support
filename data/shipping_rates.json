@@ -81,6 +81,10 @@
       "shipping_zone": "Sydney Metro"
     },
     {
+      "postcode": "2000",
+      "shipping_zone": "Sydney Metro"
+    },
+    {
       "postcode": "3000",
       "shipping_zone": "Melbourne Metro"
     },
