@@ -16,7 +16,9 @@ from evaluation.customer_simulator import (
     InitialMessage, PendingDiscovery, ProvideInformation, SelectOption,
     StopDecision, TargetOfferEvidence, customer_value, step,
 )
-from test_public_observation import configuration_text, final_snapshot, final_text, with_request
+from test_public_observation import (
+    PILOT_001_RESPONSE, UNSAFE_REQUESTS, configuration_text, final_snapshot, final_text, with_request,
+)
 
 
 class PublicDriver:
@@ -63,6 +65,54 @@ class SimulatorTests(unittest.TestCase):
         self.assertIsInstance(result.decision,StopDecision)
         self.assertEqual(result.decision.reason,reason)
         self.assertEqual(result.state.stop_decision,result.decision)
+
+    def test_pilot_response_confirms_with_resolvable_evidence(self):
+        driver = PublicDriver(self.customers[0])
+        result = driver.advance(PILOT_001_RESPONSE)
+        self.assertEqual(result.decision.actions[0].kind, 'CONFIRM_CONFIGURATION')
+        receipt = result.state.approval_receipts[-1]
+        receipt.artifact.resolve(driver.history)
+        receipt.approval_request.resolve(driver.history)
+        self.assertEqual(receipt.approval_request.quote, 'If everything is correct, kindly confirm the configuration.')
+
+    def test_refined_framing_repeated_and_changed_artifacts(self):
+        for final in (False, True):
+            driver = PublicDriver(self.customers[0])
+            if final:
+                driver.advance(PILOT_001_RESPONSE)
+            body = final_text(driver.customer) if final else configuration_text(driver.customer)
+            title = 'provisional order' if final else 'configuration summary'
+            request = ('If everything is correct, please confirm the final order.' if final else
+                       'Please confirm that the configuration above is correct.')
+            text = f'Here is your {title}.\n\n{body}\n\n{request}'
+            for repeated in (False, True):
+                result = driver.advance(text)
+                self.assertIsInstance(result.decision, CustomerTurn)
+                self.assertEqual(result.state.approval_receipts[-1].repeated, repeated)
+                result.state.approval_receipts[-1].approval_request.resolve(driver.history)
+            self.assert_stop(driver.advance(text.replace('**Cloth colour:** Blue', '**Cloth colour:** Red')),
+                             'PUBLIC_CONTENT_MISMATCH')
+
+    def test_invalid_framing_withholds_approval_and_mismatches_take_priority(self):
+        for final in (False, True):
+            for tail in (*UNSAFE_REQUESTS, 'Please confirm the configuration.' if final else
+                         'Please confirm that you would like us to place the order.'):
+                for field, value in ((None, None), ('felt_color', 'Red'), ('quantity', 2)):
+                    driver = PublicDriver(self.customers[0])
+                    if final:
+                        driver.advance(PILOT_001_RESPONSE)
+                    snapshot = final_snapshot(driver.customer) if final else driver.customer.ground_truth.configuration.model_dump()
+                    if field:
+                        snapshot[field] = value
+                    body = render_provisional_order(snapshot) if final else render_configuration_summary(snapshot)
+                    self.assert_stop(driver.advance(body+'\n\n'+tail),
+                                     'PUBLIC_CONTENT_MISMATCH' if field else 'SIMULATOR_UNINTERPRETABLE_RESPONSE')
+
+    def test_refined_final_request_still_requires_configuration_approval(self):
+        driver = PublicDriver(self.customers[0])
+        self.assert_stop(driver.advance(final_text(driver.customer)+
+                         '\n\nPlease confirm that you would like us to place the order.'),
+                         'SIMULATOR_UNINTERPRETABLE_RESPONSE')
 
     def test_exact_initial_messages_and_disclosures(self):
         for customer in self.customers:

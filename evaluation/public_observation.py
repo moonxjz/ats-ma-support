@@ -182,13 +182,58 @@ def _approval(text: str, kind: str) -> bool:
     suffix = r"(?:,? or tell me what to change)?[.?]"
     if kind == "CONFIGURATION":
         patterns = [r"Please (?:confirm|approve) (?:the|this) configuration" + suffix,
+                    r"If everything is correct, kindly confirm the configuration\.",
+                    r"Please confirm that the configuration above is correct\.",
                     r"(?:Can|Could) you (?:confirm|approve) (?:the|this) configuration\?",
                     r"Otherwise, approve the configuration as described\."]
     else:
         patterns = [r"Please (?:explicitly )?confirm (?:that )?you (?:wish|want) to place (?:this|the)(?: provisional)? order" + suffix,
+                    r"Please confirm that you would like us to place the order\.",
+                    r"If everything is correct, please confirm the final order\.",
                     r"(?:Do you wish|Would you like|Do you want) to place (?:this|the)(?: provisional)? order\?",
                     r"Please confirm (?:the final order and that you wish |you would like )to place (?:it|the order)\."]
     return any(re.fullmatch(pattern, text, re.I) for pattern in patterns)
+
+
+def _review_sentence(text: str, kind: str) -> bool:
+    """Bounded review prose, never field claims or general English inference."""
+    title = 'configuration summary' if kind == 'CONFIGURATION' else 'provisional order'
+    patterns = [
+        rf"Please (?:review|check|examine) (?:the details below|(?:this|the) {title})\.",
+        rf"(?:We have|We've) prepared (?:a|the) {title} for your review\.",
+        rf"(?:Here is|Below is) (?:your|the) {title}(?: for your review)?\.",
+        r"Please take a moment to examine the details provided and ensure they accurately reflect your requirements\.",
+        r"Please (?:review|check) the details carefully\.",
+        r"Thank you(?: for your patience)?\.",
+        r"If you notice any errors or need adjustments, please let us know so we can make the necessary corrections\.",
+        r"Please let us know if (?:any changes are needed|anything needs correcting)\.",
+    ]
+    return any(re.fullmatch(pattern, text, re.I) for pattern in patterns)
+
+
+def _framing_request(text: str, index: int, kind: str, start: int, end: int) -> EvidenceRef | None:
+    # Every sentence must be accounted for; do not cherry-pick an imperative
+    # from quotations, reported speech, negation or contradictory instructions.
+    request = None
+    for left, right, introduction in ((0, start, True), (end, len(text), False)):
+        cursor = left
+        for sentence in re.finditer(r'[^.!?]+[.!?]', text[left:right]):
+            a, b = left + sentence.start(), left + sentence.end()
+            if text[cursor:a].strip():
+                return None
+            raw = text[a:b]
+            a += len(raw) - len(raw.lstrip())
+            value = text[a:b]
+            if not introduction and _approval(value, kind):
+                if request is not None:
+                    return None  # multiple requests are conservatively ambiguous
+                request = _ref(text, index, a, b)
+            elif not _review_sentence(value, kind):
+                return None
+            cursor = b
+        if text[cursor:right].strip():
+            return None
+    return request
 
 
 def _artifact(text: str, index: int) -> PublicArtifact | None:
@@ -198,9 +243,8 @@ def _artifact(text: str, index: int) -> PublicArtifact | None:
     heading = headings[0]
     kind = "CONFIGURATION" if heading[1] == "Configuration Summary" else "FINAL_ORDER"
     prefix = text[:heading.start()].strip()
-    # Accept only bounded framing referring to this artifact kind.
-    title = 'configuration summary' if kind == 'CONFIGURATION' else 'provisional order'
-    if prefix and not re.fullmatch(rf"Please review (?:the details below|(?:this|the) {title})\.", prefix, re.I):
+    # Quoted/fenced documents are not presented as an artifact for approval.
+    if re.search(r'["“”`]|^\s*>', prefix, re.M):
         return None
     fields = []
 
@@ -230,8 +274,8 @@ def _artifact(text: str, index: int) -> PublicArtifact | None:
     tail = text[end:]
     # A body with trailing junk on its final row is already captured as value;
     # the strict scalar checks and request grammar reject it.
-    request = tail.strip()
-    if request and not _approval(request, kind):
+    # Do not reinterpret duplicate/extra rows or sections as harmless framing.
+    if re.search(r'^\s*(?:[-*#>]|```)|\*\*', tail, re.M):
         return None
     values = []
     try:
@@ -247,9 +291,8 @@ def _artifact(text: str, index: int) -> PublicArtifact | None:
             values.append(ArtifactValue(field=field, value=value))
     except ValueError:
         return None
-    request_start = end + len(tail) - len(tail.lstrip())
     return PublicArtifact(kind=kind, values=tuple(values), evidence=_ref(text, index, heading.start(), end),
-                          approval_request=_ref(text, index, request_start, request_start + len(request)) if request else None)
+                          approval_request=_framing_request(text, index, kind, heading.start(), end))
 
 
 def observe_public_response(text: str, message_index: int, *, context_field: ConfigurationField | None = None) -> PublicObservation:

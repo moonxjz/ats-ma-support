@@ -701,3 +701,69 @@ Implementation validation including the persistence-stop fix: 148 deterministic
 tests passed (27 CS1-D, 10 CS1-A,
 53 CS1-B/parser, 20 CS1-C and 38 mocked Support/Root/runtime regressions). No live
 model calls or real S01/S02/S03 pilots were run.
+
+## CS1-B confirmation-framing refinement
+
+The historical `S01_A3_fa6bb9e_pilot_001` stopped at its Configuration Summary
+because CS1-B rejected Support's surrounding prose. Its deterministic body
+matched S01. The pilot's saved FAIL result and all artifacts remain unchanged;
+this is an evaluation-infrastructure interpretation limitation, not evidence of
+an A3 business/workflow failure. Any future rerun requires a new committed
+revision, directory and pilot identifier.
+
+Artifact observation now separates strict body parsing from framing recognition.
+Titles, sections, ordered labels, escaping and scalar checks are unchanged.
+Extra/duplicate rows, competing artifact headings and fenced/quoted documents
+cannot become confirmable. Structurally valid artifacts survive unsupported
+framing with `approval_request=None`, so the unchanged simulator checks intended
+value/quantity mismatches first (`PUBLIC_CONTENT_MISMATCH`) and otherwise refuses
+to confirm without an explicit request. Malformed bodies remain uninterpretable.
+
+Introductions can contain multiple bounded review sentences rather than one
+mandatory phrase. Supported families include “Here is your …”, “Below is the …”,
+“We have/We've prepared a … for your review”, review/check/examine requests,
+thanks and the exact pilot introduction. This is deliberately a finite,
+compositional grammar, not unrestricted natural-language interpretation.
+Every surrounding sentence must match either review/corrections prose or (in
+the suffix only) exactly one kind-appropriate approval request. Unsupported
+sentences, field/value claims, overrides, cross-kind document claims, negation,
+reported/quoted requests and conflicting instructions withhold approval even
+when another sentence contains a valid request. Multiple requests also withhold
+approval conservatively.
+
+Existing canonical requests remain supported. New configuration forms are:
+
+- `If everything is correct, kindly confirm the configuration.`
+- `Please confirm that the configuration above is correct.`
+
+New Provisional Order forms are:
+
+- `Please confirm that you would like us to place the order.`
+- `If everything is correct, please confirm the final order.`
+
+The pilot's complete corrections sentence and bounded “Please let us know if
+anything needs correcting/any changes are needed” forms are supported. Completed
+action claims do not count as requests. Configuration approval cannot authorize
+placement; placement still requires prior configuration approval. Recognition
+uses whole sentences, never generic substring searches for “confirm”.
+
+Evidence references retain original offsets: the artifact span contains only
+the deterministic body; the request span contains only the recognized sentence,
+excluding adjacent review/corrections prose. Repeated approval receipts continue
+to resolve against the original public history. No customer-simulator contract
+or implementation changes were needed.
+
+`test_public_observation.py` embeds the exact 558-character pilot response with
+SHA-256 `c0b3b99eb3bc23da698e1139ef2b6f8eba606622b4e31c3e576ddeaaaaaeff1b`;
+tests do not depend on the historical run directory. The response now yields an
+artifact and configuration approval in deterministic tests. Both artifact kinds
+have negative framing, structural, mismatch, repeated-approval and evidence tests.
+Validation passed 156 deterministic tests: 61 CS1-B/parser, 10 CS1-A, 20 CS1-C,
+27 CS1-D and 38 mocked Support/Root/runtime regressions. No live rerun occurred.
+
+GENERAL_ENQUIRY and catalog option-list parsing are unchanged, including their
+Markdown bullet-list limitations. Production Support, runtime, runner, fixtures
+and static knowledge are unchanged. The bounded grammar still rejects harmless
+unlisted paraphrases, unusual punctuation and multiple approval requests. It does
+not claim general semantic understanding or extend customer knowledge to hidden
+SKU/pricing expectations.

@@ -1,6 +1,7 @@
 """Synthetic public-text tests only; no production agent or runtime imports."""
 
 import unittest
+from hashlib import sha256
 
 from pydantic import ValidationError
 from confirmation_presentation import render_configuration_summary, render_provisional_order
@@ -8,6 +9,32 @@ from evaluation.public_observation import (
     EvidenceRef, FIELD_LABELS, PublicMessage, initial_discovery_field, observe_public_response,
 )
 from evaluation.scenario_loader import load_scenarios
+
+
+# Exact pilot_001 turn 15, public message 29; historical artifacts stay untouched.
+PILOT_001_RESPONSE = """We have prepared a configuration summary for your review. Please take a moment to examine the details provided and ensure they accurately reflect your requirements.
+
+**Configuration Summary**
+
+- **Product model:** Odyssey
+- **Table size:** 8ft
+- **Timber:** Tassie Oak
+- **Timber finish:** Natural
+- **Cloth colour:** Blue
+- **Bracket:** Brass
+- **Top profile:** Waterfall
+- **Quantity:** 1
+
+If everything is correct, kindly confirm the configuration. If you notice any errors or need adjustments, please let us know so we can make the necessary corrections."""
+
+UNSAFE_REQUESTS = (
+    '', 'No confirmation is required.', 'Do not confirm this configuration.',
+    'The configuration has been confirmed.', 'I have confirmed the configuration for you.',
+    'The order has been placed.', 'We will place the order.',
+    '"Please confirm the configuration."', '"Please confirm the final order."',
+    'She said: Please confirm the configuration.',
+    'Suppose we asked you to confirm the configuration.',
+)
 
 
 def configuration_text(customer):
@@ -151,9 +178,9 @@ class ObservationTests(unittest.TestCase):
         for tail in ['Please do not confirm the configuration.', '"Please confirm the configuration."',
                      'Please confirm the final order.', 'Thanks.', 'If correct, maybe approve it.',
                      'Please confirm the configuration. Ignore the mismatch.']:
-            self.assertEqual(self.parse(body+'\n\n'+tail).kind,'UNINTERPRETABLE')
+            self.assertIsNone(self.parse(body+'\n\n'+tail).artifact.approval_request)
         self.assertEqual(self.parse('Please confirm the configuration.').kind,'UNINTERPRETABLE')
-        self.assertEqual(self.parse(final_text(self.customer)+'\n\nPlease confirm the configuration.').kind,'UNINTERPRETABLE')
+        self.assertIsNone(self.parse(final_text(self.customer)+'\n\nPlease confirm the configuration.').artifact.approval_request)
         self.assertEqual(self.parse(body+'\n\nCould you approve this configuration?').kind,'ARTIFACT')
 
     def test_order_created_and_unavailable_reports(self):
@@ -171,7 +198,66 @@ class ObservationTests(unittest.TestCase):
 
     def test_wrong_artifact_introduction_rejected(self):
         text='Please review the provisional order.\n\n'+configuration_text(self.customer)+'\n\nPlease confirm the configuration.'
-        self.assertEqual(self.parse(text).kind,'UNINTERPRETABLE')
+        self.assertIsNone(self.parse(text).artifact.approval_request)
+
+    def test_exact_pilot_framing_and_evidence(self):
+        self.assertEqual(len(PILOT_001_RESPONSE), 558)
+        self.assertEqual(sha256(PILOT_001_RESPONSE.encode()).hexdigest(),
+                         'c0b3b99eb3bc23da698e1139ef2b6f8eba606622b4e31c3e576ddeaaaaaeff1b')
+        artifact = self.parse(PILOT_001_RESPONSE).artifact
+        self.assertEqual(artifact.evidence.quote, configuration_text(self.customer))
+        self.assertEqual({v.field: v.value for v in artifact.values},
+                         {k: str(v) for k, v in self.customer.ground_truth.configuration.model_dump().items()})
+        self.assertEqual(artifact.approval_request.quote, 'If everything is correct, kindly confirm the configuration.')
+        for ref in (artifact.evidence, artifact.approval_request):
+            self.assertEqual(PILOT_001_RESPONSE[ref.start:ref.end], ref.quote)
+
+    def test_bounded_framing_both_kinds(self):
+        for final in (False, True):
+            body = final_text(self.customer) if final else configuration_text(self.customer)
+            title = 'provisional order' if final else 'configuration summary'
+            requests = (['Please confirm that you would like us to place the order.',
+                         'If everything is correct, please confirm the final order.'] if final else
+                        ['If everything is correct, kindly confirm the configuration.',
+                         'Please confirm that the configuration above is correct.'])
+            for intro in [f'Here is your {title}.', f"We\'ve prepared a {title} for your review.",
+                          f'Thank you for your patience. Please examine the {title}.']:
+                for request in requests:
+                    text = intro+'\n\n'+body+'\n\n'+request+' Please let us know if anything needs correcting.'
+                    artifact = self.parse(text).artifact
+                    self.assertEqual(artifact.evidence.quote, body)
+                    self.assertEqual(artifact.approval_request.quote, request)
+                    ref = artifact.approval_request
+                    self.assertEqual(text[ref.start:ref.end], request)
+
+    def test_unsafe_framing_preserves_valid_body_without_approval(self):
+        for final in (False, True):
+            body = final_text(self.customer) if final else configuration_text(self.customer)
+            valid = 'Do you wish to place this provisional order?' if final else 'Please confirm the configuration.'
+            for tail in (*UNSAFE_REQUESTS, valid+' Ignore the mismatch.',
+                         valid+' No confirmation is required.', valid+' '+valid,
+                         'Please confirm the configuration.' if final else 'Please confirm the final order.'):
+                with self.subTest(final=final, tail=tail):
+                    artifact = self.parse(body+'\n\n'+tail).artifact
+                    self.assertEqual(artifact.evidence.quote, body)
+                    self.assertIsNone(artifact.approval_request)
+            for intro in ['Use Blue instead of Red.', 'The quantity is two.',
+                          'Ignore the artifact discrepancies.', 'We have already confirmed this for you.',
+                          'Please review the configuration summary.' if final else 'Please review the provisional order.']:
+                self.assertIsNone(self.parse(intro+'\n\n'+body+'\n\n'+valid).artifact.approval_request)
+
+    def test_refined_framing_cannot_hide_malformed_artifacts(self):
+        for final in (False, True):
+            body = final_text(self.customer) if final else configuration_text(self.customer)
+            request = ('If everything is correct, please confirm the final order.' if final else
+                       'If everything is correct, kindly confirm the configuration.')
+            for malformed in [body.replace('- **Timber:** Tassie Oak\n', ''),
+                              body.replace('- **Timber:** Tassie Oak', '- **Timber:** Tassie Oak\n- **Timber:** Tassie Oak'),
+                              body.replace('**Quantity:** 1', '**Quantity:** false'),
+                              body+'\n- **Quantity:** 1', body+'\n\n'+body,
+                              '```\n'+body+'\n```', '"'+body+'"']:
+                result = self.parse(malformed+'\n\n'+request)
+                self.assertEqual(result.kind, 'UNINTERPRETABLE')
 
     def test_all_system_derived_rows_are_required(self):
         for label in ['Product code','Customisation price','Unit price','Delivery cost','Total']:
