@@ -767,3 +767,177 @@ and static knowledge are unchanged. The bounded grammar still rejects harmless
 unlisted paraphrases, unusual punctuation and multiple approval requests. It does
 not claim general semantic understanding or extend customer knowledge to hidden
 SKU/pricing expectations.
+
+## CS2-A1: LLM interpretation, deterministic authorization and wording
+
+CS2-A1 is additive. `llm_customer_simulator.py` consumes the existing
+`CustomerSimulatorInput` and returns the existing `SimulatorStep`; it shares
+`CustomerSimulatorState` and accepted `CustomerAction` types with CS1. It does not
+call CS1's decision step or evidence validator. `llm_public_evidence.py` owns a
+separate bounded public-evidence verifier. Frozen scenarios and CS1 behavior are
+unchanged.
+
+The entry point is `step(inputs, *, chat_fn)`. The caller must inject the model
+call; importing these modules imports no Ollama client and performs no inference.
+Turn zero emits the exact frozen `initial_message`, including whitespace, with
+zero model calls. Subsequent eligible turns make exactly one call:
+
+```python
+chat_fn(
+    model="qwen3:8b", think=False, stream=False,
+    messages=[{"role": "system", "content": SYSTEM_PROMPT},
+              {"role": "user", "content": canonical_payload_json}],
+    format=ProposalEnvelope.model_json_schema(),
+    options={"temperature": 0, "seed": 0},
+)
+```
+
+The payload has exactly `customer`, `state`, and `public_history`, reconstructed
+from the strict shared customer-only input. JSON serialization uses sorted keys,
+compact separators, original Unicode text, and no nonfinite numbers. Latest
+Support text is derived from history. Full ScenarioSpec, evaluator expectations,
+architecture/run labels, ATS state/results/routing, persistence and Support
+knowledge objects are never inputs. Public transcript content is untrusted data;
+publicly displayed product codes/prices remain visible but have no hidden expected
+counterparts inside CS2. No truncation or summarization is implemented.
+
+No top-k/top-p/context/output-token overrides are added in A1. Local server/model
+revision, effective options and context/output capacity must be checked before
+freezing a later live configuration. Identical mocked inputs/proposals yield
+identical authorization/rendering/state; model outputs are not claimed to be
+bitwise reproducible across hardware/backends. Using qwen3:8b for both ATS and the
+simulator introduces correlated failures and stylistic dependence, even with
+separate calls and deterministic authorization.
+
+### Proposal and authorization contracts
+
+`ProposalEnvelope.proposal` discriminates `TurnProposal` and `StopProposal` by
+`kind`. `TurnProposal` has only `kind="CUSTOMER_TURN"` and nonempty `actions`.
+There is no `customer_text`, rationale, reasoning, next state, or initial-message
+proposal. Action variants are:
+
+| Proposal | Payload |
+| --- | --- |
+| `InformationProposal` | Unique `items`, each with information `field`, typed candidate `value`, and `request_evidence` |
+| `OptionsProposal` | Configuration `field`, `request_evidence` |
+| `TargetQuestionProposal` | Configuration `field`, candidate `value`, `options_evidence` |
+| `SelectionProposal` | Configuration `field`, candidate `value`, `trigger_evidence`, `offer_evidence` |
+| `ConfigurationProposal` | `artifact`, `approval_request` |
+| `FinalOrderProposal` | `artifact`, `approval_request` |
+| `StopProposal` | Bounded advisory `category`, nonempty `evidence` |
+
+Candidate information values discriminate `TEXT`, `QUANTITY` (strict positive
+integer), and `ABSENT` (optional company/instructions only, when truth is None).
+All models are strict/frozen and forbid extras. Parsing rejects duplicate JSON
+keys, trailing material, code fences, nonfinite JSON constants, coercions, unknown
+fields/actions and blank required strings. No JSON extraction/repair occurs.
+Confirmation must occur alone. Fields cannot repeat across a bundle. At most one
+discovery question is permitted and it must be last.
+
+Guards require exact scenario candidate values, independently supported public
+requests, and scenario disclosure/discovery policy. Known selections may be
+repeated when requested. Unknown targets require positive field-specific Support
+offers; private truth is not an offer. A relevant options answer omitting a target
+can authorize its target question once. Denial vetoes continuation. An ignored
+pending discovery cannot be bypassed to answer an unrelated request. No generic
+clarification/recovery action is implemented.
+
+Only authorized existing actions enter `render_authorized`, which delegates to
+CS1's pure private `_render_actions`. This is an intentional private dependency,
+covered by exact-message and CS1-C compatibility tests. No candidate model values
+are copied into wording: the shared renderer resolves customer truth itself.
+Initial, selection, optional-absence, discovery and confirmation wording remains
+CS1 wording. A1 performs no free-form generated-customer-text consistency parsing.
+LLM customer wording belongs to a separately approved future CS2-B.
+
+### Public evidence coverage and limits
+
+Existing `EvidenceRef` resolves exact original Unicode character offsets and
+quotes, normally against assistant-role messages. The verifier independently
+recognizes whole request/availability/approval claims; a valid span alone never
+establishes semantics. Supported families include:
+
+- Provide/share/enter requests, "What is/What's your ...?", and choose/select
+  requests with unambiguous canonical labels/aliases and compound fields.
+- Field-labelled option lists, consecutive Markdown option bullets, "We offer ..."
+  under an outstanding public field question, explicit available/unavailable
+  statements, and public `Supported values` lists.
+- Model-qualified table-size offers when an exact prior public model-selection
+  statement establishes the matching model.
+- Strict Configuration Summary and Provisional Order bodies, with required ordered
+  rows, scalar/escaping checks, original offsets and rejection of duplicate,
+  missing, competing, quoted or fenced artifacts.
+- Scoped configuration/final placement requests, including "If everything looks
+  right, please ...". Review alone is insufficient. Multiple approval requests
+  are conservatively ambiguous.
+- Explicit completed order-created reports and bounded public-unavailable reports.
+
+The artifact-body grammar is adapted locally from CS1, with no call to CS1's
+whole-response framing parser. Courtesy prose does not need to match CS1's review
+sentence enumeration. Nevertheless, unverified material statements, explicit
+vetoes, quotations, hypothetical availability and conflicting surrounding claims
+cannot be ignored beside a selected reference. These checks are bounded semantic
+coverage, not a proof about arbitrary English; unsupported consequential language
+fails closed. Some harmless language may still be rejected and should be reported
+as a simulator limitation rather than an ATS business failure.
+
+Configuration comparison covers all seven selections and quantity; confirmation
+also requires actual prior customer disclosures. Final comparison additionally
+covers identity/contact, all address fields, room and applicable optional facts,
+and requires prior valid configuration approval. Public SKU and prices are
+structurally checked only, never compared with evaluator truth or recomputed.
+
+Saved offers/requests are reverified with CS2 evidence rules; pending questions
+must match actual deterministic customer questions. Disclosures are checked
+against actual rendered public statements. Receipts must resolve to matching
+artifacts, approval requests and the actual following customer approval; final
+receipts require an earlier configuration receipt. Updates construct validated
+new state atomically; the caller still owns dispatch/adoption.
+
+CS1-C compatibility is preserved through exact deterministic questions and model
+selection statements. Its existing query/context grammar and ambiguous global
+size-union behavior are not expanded. CS2 does not inject private actions/state
+into that provider and does not repair routing outcomes.
+
+### Failures, validation and deferred integration
+
+`CS2Failure` exposes `code` and an exception message:
+
+- `INVALID_INPUT`: invalid boundary, public history or saved evidence; zero calls.
+- `MODEL_FAILURE`: injected model call failed; no retry.
+- `INVALID_PROPOSAL`: empty/incomplete/malformed/schema-invalid model output.
+- `GUARD_REJECTED`: unsupported action semantics/evidence/truth/policy.
+
+Failures raise without state mutation, customer emission, retry, fabricated
+public evidence or fallback. Public STOP proposals are independently checked and
+mapped to existing `StopDecision` reasons. `CANNOT_INTERPRET` currently maps a
+verified ignored pending enquiry to the existing uninterpretable public stop;
+arbitrary opaque text does not become a verified ATS failure merely because the
+model says so. Existing terminal state and the 64-message development safeguard
+bypass the model. This safeguard is not the formal benchmark interaction budget.
+
+Mocked tests run explicitly, avoiding repository-wide discovery and live
+`test_ollama.py`:
+
+```sh
+python -m unittest test_llm_public_evidence test_llm_customer_simulator \
+  test_scenario_spec test_public_observation test_customer_simulator \
+  test_static_product_knowledge -q
+```
+
+Tests use individual synthetic public decision steps, not experiment execution.
+The exact preserved pilot_001 public response is reused from the existing test
+fixture. A pilot_002 response is not present in this worktree and is not
+reconstructed. Historical pilot_001 and pilot_002 FAIL outcomes remain unchanged.
+
+CS2-A2 runner diagnostics, SimulatorAttemptTrace, manifest metadata and
+PilotValidation verifier injection are deliberately absent. The unchanged runner
+and PilotValidation retain their earlier integration limitations; this module is
+not an approved live-pilot entry point. No live inference or S01/S02/S03 experiment
+was executed for CS2-A1.
+
+CS2-A1 implementation validation: 176 deterministic/mock tests passed (85 new
+CS2 tests and 91 existing CS1-A/B/C regressions). Coverage includes repeated S03
+field discovery through individual mocked steps, compound pending requests,
+renderer/provider compatibility, immutable state, both artifact kinds, malformed
+proposals, negative evidence, and zero retries. These are not live-pilot results.
