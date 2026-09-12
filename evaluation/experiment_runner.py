@@ -206,6 +206,11 @@ def observe_persistence(path: Path) -> PersistenceObservation:
         return PersistenceObservation(status='MALFORMED', raw_text=raw, error=str(exc))
 
 
+def _require_readable_persistence(observation: PersistenceObservation) -> None:
+    if observation.status in ('MALFORMED', 'UNREADABLE'):
+        raise ValueError(f'Persistence observation is {observation.status}: {observation.error}')
+
+
 def _failure(phase: Phase, exc: Exception) -> TechnicalFailure:
     pending = exc.pending_turn if isinstance(exc, TurnFailure) else None
     return TechnicalFailure(phase=phase, exception_type=type(exc).__name__, message=str(exc),
@@ -340,6 +345,8 @@ def run_scenario(
                 persistence_before=before_store, persistence_after=before_store)
             provider_elapsed = runtime_elapsed = 0.0
             try:
+                phase = 'RUNNER_INTEGRITY'
+                _require_readable_persistence(before_store)
                 phase = 'PROVIDER'
                 provider_calls += 1
                 start = perf_counter()
@@ -375,8 +382,20 @@ def run_scenario(
                 trace_values['technical_failure'] = failure
                 termination = TechnicalTermination(failure=failure)
             finally:
+                after_store = (before_store if before_store.status in ('MALFORMED', 'UNREADABLE')
+                               else observe_persistence(store))
                 trace_values.update(provider_elapsed=provider_elapsed, runtime_elapsed=runtime_elapsed,
-                                    persistence_after=observe_persistence(store))
+                                    persistence_after=after_store)
+                if before_store.status not in ('MALFORMED', 'UNREADABLE'):
+                    try:
+                        _require_readable_persistence(after_store)
+                    except ValueError as exc:
+                        failure = _failure('RUNNER_INTEGRITY', exc)
+                        if termination is None:
+                            termination = TechnicalTermination(failure=failure)
+                            trace_values['technical_failure'] = failure
+                        else:
+                            secondary.append(failure)
                 trace = TurnTrace(**trace_values)
                 traces.append(trace)
             phase = 'OUTPUT'
@@ -387,11 +406,23 @@ def run_scenario(
             secondary.append(failure)
         else:
             termination = TechnicalTermination(failure=failure)
+    # Retain the triggering observation without re-reading an invalid store.
+    persistence = traces[-1].persistence_after if traces else None
+    if persistence is None or persistence.status not in ('MALFORMED', 'UNREADABLE'):
+        persistence = observe_persistence(store)
+        try:
+            _require_readable_persistence(persistence)
+        except ValueError as exc:
+            failure = _failure('RUNNER_INTEGRITY', exc)
+            if isinstance(termination, TechnicalTermination):
+                secondary.append(failure)
+            else:
+                termination = TechnicalTermination(failure=failure)
     result = ExperimentRunResult(run_id=run_id, architecture=architecture, scenario_id=scenario.scenario_id,
         termination=termination, attempted_customer_messages=tuple(attempted), dispatched_customer_messages=tuple(dispatched),
         completed_turns=len(history)//2, provider_calls=provider_calls, runtime_calls=runtime_calls,
         public_record=PublicRunRecord(run_id=run_id, public_history=history), final_customer_simulator_state=state,
-        last_committed_session_json=session.model_dump_json(), persistence_observation=observe_persistence(store),
+        last_committed_session_json=session.model_dump_json(), persistence_observation=persistence,
         business_terminal_observation=_business(session, traces), traces=tuple(traces),
         timing=RunTiming(full_run_elapsed=perf_counter()-started,
             provider_elapsed=sum(t.provider_elapsed for t in traces), runtime_elapsed=sum(t.runtime_elapsed for t in traces)),

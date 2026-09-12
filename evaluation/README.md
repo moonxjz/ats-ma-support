@@ -638,6 +638,18 @@ the earlier termination and independently fail pilot validation. A disk failure
 can leave incomplete/stale files; the returned result retains available evidence
 and output errors without retrying the conversation.
 
+Every MALFORMED or UNREADABLE persistence observation now stops the run using
+`TechnicalTermination` with phase `RUNNER_INTEGRITY`. The pre-dispatch guard
+retains the proposed customer turn without adopting its state or calling the
+provider/runtime. The post-turn guard preserves any completed public pair and
+committed session, then writes the current trace without another simulator,
+provider, runtime or dispatch call. If a technical failure already exists, it
+remains primary (including PendingTurn); the persistence failure is secondary.
+The triggering invalid observation is retained without re-reading or modifying
+the store. A newly invalid final observation also produces a technical failure;
+any prior public stop remains in the final simulator state. Unknown record counts
+remain unknown, never zero, and these runs cannot receive pilot PASS.
+
 Runtime snapshots contain exposed classification, routing, execution status,
 BusinessResult, Support result and workflow state. Internal controller transitions,
 confirmation interpretation, rejected raw model output and token counts are
@@ -685,6 +697,7 @@ responses and persistence evidence; these tests do not establish real A3 pilot
 success. Existing CS1-A/B/C and mocked Support/Root/runtime regressions are run
 alongside them. All production code and shared business fixtures remain unchanged.
 
-Implementation validation: 144 deterministic tests passed (23 CS1-D, 10 CS1-A,
+Implementation validation including the persistence-stop fix: 148 deterministic
+tests passed (27 CS1-D, 10 CS1-A,
 53 CS1-B/parser, 20 CS1-C and 38 mocked Support/Root/runtime regressions). No live
 model calls or real S01/S02/S03 pilots were run.

@@ -338,6 +338,95 @@ class RunnerTests(unittest.TestCase):
         with patch('pathlib.Path.read_text',side_effect=PermissionError('denied')):
             self.assertEqual(observe_persistence(path).status,'UNREADABLE')
 
+    def persistence_fault(self, status, observation_number):
+        """Inject an invalid store at a specific read; retain its exact bytes."""
+        calls = []
+        def observe(path):
+            calls.append(path)
+            if len(calls) == observation_number:
+                path.write_bytes(b'broken store bytes')
+                if status == 'UNREADABLE':
+                    with patch('pathlib.Path.read_text', side_effect=PermissionError('denied')):
+                        return observe_persistence(path)
+            return observe_persistence(path)
+        return calls, observe
+
+    def test_invalid_persistence_after_turn_stops_all_further_calls(self):
+        for status in ('MALFORMED', 'UNREADABLE'):
+            with self.subTest(status=status):
+                calls, observe = self.persistence_fault(status, 2)
+                sim = Mock(wraps=step)
+                provider = Mock(wraps=provide_support_knowledge)
+                with patch('evaluation.experiment_runner.observe_persistence', side_effect=observe):
+                    result, script = self.run_script(simulator=sim, knowledge_provider=provider)
+                self.assertEqual((sim.call_count, provider.call_count, len(script.calls)), (1, 1, 1))
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(result.termination.failure.phase, 'RUNNER_INTEGRITY')
+                self.assertEqual(result.completed_turns, 1)
+                self.assertEqual(result.dispatched_customer_messages, result.attempted_customer_messages)
+                self.assertEqual(result.last_committed_session_json, script.results[0].session.model_dump_json())
+                history = script.results[0].session.history
+                self.assertEqual(result.public_record.public_history,
+                                 tuple(PublicMessage(role=m.role, text=m.content) for m in history))
+                self.assertEqual(result.traces[0].persistence_after, result.persistence_observation)
+                self.assertEqual(result.persistence_observation.status, status)
+                self.assertIsNone(result.persistence_observation.record_count)
+                self.assertEqual(script.store.read_bytes(), b'broken store bytes')
+                self.assertIsNotNone(result.traces[0].runtime_result_json)
+                self.assertGreaterEqual(result.timing.runtime_elapsed, 0)
+                validation = self.validate(result)
+                self.assertEqual(validation.verdict, 'FAIL')
+                self.assertEqual(next(c.status for c in validation.checks if c.name == 'one_persisted_order'), 'UNKNOWN')
+                saved = json.loads(Path(result.outputs.result).read_text())
+                self.assertEqual(saved['persistence_observation']['status'], status)
+
+    def test_invalid_persistence_before_dispatch_preserves_proposal(self):
+        for status in ('MALFORMED', 'UNREADABLE'):
+            calls, observe = self.persistence_fault(status, 1)
+            sim = Mock(wraps=step)
+            provider = Mock(wraps=provide_support_knowledge)
+            with patch('evaluation.experiment_runner.observe_persistence', side_effect=observe):
+                result, script = self.run_script(simulator=sim, knowledge_provider=provider)
+            self.assertEqual((sim.call_count, provider.call_count, len(script.calls)), (1, 0, 0))
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(result.attempted_customer_messages), 1)
+            self.assertEqual(result.dispatched_customer_messages, ())
+            self.assertEqual(result.public_record.public_history, ())
+            self.assertEqual(result.final_customer_simulator_state, CustomerSimulatorState())
+            self.assertFalse(result.traces[0].dispatched)
+            self.assertEqual(result.traces[0].persistence_before.status, status)
+            self.assertEqual(result.termination.failure.phase, 'RUNNER_INTEGRITY')
+            self.assertEqual(script.store.read_bytes(), b'broken store bytes')
+
+    def test_invalid_persistence_preserves_pending_runtime_failure(self):
+        for status in ('MALFORMED', 'UNREADABLE'):
+            events = happy_events(self.scenarios[0])
+            events[-1].fail_after_commit = True
+            calls, observe = self.persistence_fault(status, 2 * len(events))
+            sim = Mock(wraps=step)
+            with patch('evaluation.experiment_runner.observe_persistence', side_effect=observe):
+                result, script = self.run_script(events=events, simulator=sim)
+            self.assertEqual(result.termination.failure.phase, 'RUNTIME')
+            self.assertIsNotNone(result.termination.failure.pending_turn_json)
+            self.assertEqual(result.traces[-1].technical_failure, result.termination.failure)
+            self.assertEqual(result.secondary_failures[0].phase, 'RUNNER_INTEGRITY')
+            self.assertEqual(result.persistence_observation.status, status)
+            self.assertEqual(result.completed_turns, len(events) - 1)
+            self.assertEqual(sim.call_count, len(script.calls))
+            self.assertEqual(result.last_committed_session_json, script.results[-1].session.model_dump_json())
+            self.assertEqual(script.store.read_bytes(), b'broken store bytes')
+
+    def test_invalid_final_observation_is_technical_not_public_termination(self):
+        for status in ('MALFORMED', 'UNREADABLE'):
+            calls, observe = self.persistence_fault(status, 2 * len(happy_events(self.scenarios[0])) + 1)
+            with patch('evaluation.experiment_runner.observe_persistence', side_effect=observe):
+                result, script = self.run_script()
+            self.assertEqual(result.termination.failure.phase, 'RUNNER_INTEGRITY')
+            self.assertEqual(result.final_customer_simulator_state.stop_decision.reason, 'ORDER_CREATED_PUBLICLY_REPORTED')
+            self.assertEqual(result.persistence_observation.status, status)
+            self.assertEqual(result.completed_turns, len(script.calls))
+            self.assertEqual(self.validate(result).verdict, 'FAIL')
+
     def test_setup_simulator_and_output_failures_do_not_continue(self):
         script=ScriptedExecution(self.scenarios[0],happy_events(self.scenarios[0]))
         with patch('evaluation.experiment_runner.validate_repository',side_effect=ValueError('bad provenance')):
