@@ -129,8 +129,8 @@ outside this implementation.
 CS1-B implements a pure customer decision step over the CS1-A customer projection
 and public text. It does not load scenarios, access catalog/shipping data, import
 ATS agents/state/runtime, send messages, or run conversations. Fixture loading and
-`scenario.customer_view()` happen outside the simulator. CS1-C catalog integration
-and the experiment runner remain unimplemented.
+`scenario.customer_view()` happen outside the simulator. CS1-C supplies a separate static Support knowledge provider, described below.
+The experiment runner remains unimplemented.
 
 The two implementation modules are:
 
@@ -355,3 +355,198 @@ requests, S01-S03 discovery behavior, every intended artifact-field mismatch,
 repeated approvals, public system-derived values independent of evaluator truth,
 immutability/failure behavior, architecture-independent results, and the safety
 limit. No CS1-C adapter or experiment runner is included.
+
+## CS1-C shared static product knowledge
+
+To isolate workflow-control allocation, authoritative product-option knowledge is
+provided through a shared static knowledge provider and the existing Support
+knowledge interface. Future A1/A2/A3 integrations must use the same snapshot,
+projection rules, Support prompt, model/settings and grounding checks. In
+production, facts would normally come from catalog/database tools. Tool selection,
+retrieval planning, retrieval latency and recovery are excluded from this design.
+
+`evaluation/static_product_knowledge.py` provides:
+
+```python
+load_static_product_knowledge(
+    path: str | Path = CATALOG_PATH,
+    *, expected_sha256: str,
+) -> StaticProductKnowledge
+
+provide_support_knowledge(
+    current_customer_message: str,
+    public_history: tuple[PublicMessage, ...] = (),
+    *, knowledge: StaticProductKnowledge,
+) -> SupportKnowledgeContext | None
+
+detect_product_query(current_customer_message: str) -> ProductQuery | None
+```
+
+Load the catalog once at setup, then reuse the validated immutable snapshot. The
+expected hash is REQUIRED and caller-owned; it can come from the frozen fixture's
+`fixtures.product_catalog.sha256`. The provider contains no hard-coded benchmark
+hash. It verifies actual bytes, rejects malformed sources, and never reads files
+or invokes tools/models during enquiry projection. No second manually maintained
+option fixture is created.
+
+`StaticProductKnowledge` contains `source_path`, `source_sha256`,
+`model_sizes: tuple[ModelSizeOptions, ...]`, and tuple fields `timber`,
+`timber_painting`, `felt_color`, `bracket`, `top_profile`. `ModelSizeOptions` has
+`product_model` and `table_sizes`. Properties `product_models` and `table_sizes`
+derive model order and the global size union from those mappings. The models are
+strict, frozen, forbid extras and revalidate supplied instances. They contain no
+SKU, price, shipping, room-validation or workflow values.
+
+### Authoritative universes
+
+Values below preserve current source spelling and order; provider code derives
+them from the catalog rather than embedding this table.
+
+| Field | Values |
+| --- | --- |
+| `product_model` | Odyssey; Odyssey Rise; Saga; Kings Cross; Sleek; Cyber; Double Moon; Wave; Victory; Regent; Regent Rise; Homestead; Southern Cross; Executive; Melody; Prism; Rustic |
+| `table_size` | 7ft; 8ft; 9ft, subject to model |
+| `timber` | Tassie Oak; American Oak; Messmate; Zebra; Blackwood; Myrtle; Marri; Camphor Laurel; Jarrah |
+| `timber_painting` | Natural; Black; Nutmeg; Riverbed; Stone; Teak; Walnut; Wenge; White; Jarrah; Umber |
+| `felt_color` | Olive; Blue; Burgundy; Black; Red; Purple; Grey |
+| `bracket` | Standard rubber; Stainless Steel; Brass; Black Powder; Black Chrome; Copper |
+| `top_profile` | Bull-nose Edge - with black steel side skirt; Bull-nose Edge - with stainless steel side skirt; Bull-nose Edge - with matching timber side skirt; Ball Return; Ball Return with Timber Cladding; Waterfall; Live-Edge |
+
+Odyssey Rise, Sleek, Double Moon, Wave, Regent Rise, Melody and Prism support 7ft
+and 8ft. The other ten models also support 9ft. Existing `DEMO_TABLE_SIZES`
+restricts this experiment to 7ft/8ft/9ft despite retained 6ft source records.
+These are supported configuration options, not claims about live inventory.
+
+Model names come from explicit `product_model` mappings, not display-title
+parsing. Repeated models across sizes are expected; duplicate model/size pairs,
+duplicate category/title records and case-conflicting spellings fail validation.
+Canonical strings are not silently stripped or recased. SKU is never a
+deduplication key: Tassie Oak and American Oak remain distinct options even though
+their source SKU repeats. Source price/SKU strings are checked for presence only,
+then discarded; no pricing computation or SKU projection occurs.
+
+### Public query interpretation and projection
+
+The bounded grammar recognizes one public question using forms such as:
+
+- `What timber options are available?`
+- `What models do you have available?` / `What models do you have?`
+- `What felt colours can I choose?`
+- `What table sizes are available for Saga?`
+- `Is Marri available for timber?`
+
+Aliases cover the seven discovery fields, including timber types/finishes,
+felt/cloth colour/color, brackets, and top profile/top-profile. Longer phrases
+such as timber finish remain separate from timber. Grammar keywords are
+case-insensitive; explicit model names retain canonical matching.
+
+The parser recognizes the S03 buying-intent preamble plus its model question,
+and bounded factual lines preceding CS1-B's final discovery question. These
+prefixes do not supply authoritative product facts. Multiple questions, ambiguous
+multi-topic questions, quoted questions, unknown preambles, and unsupported
+price/shipping/room queries return `None`. There is no LLM interpretation or hidden
+state fallback. Broader paraphrases remain outside this grammar.
+
+Table-size context follows these rules:
+
+1. A canonical model explicitly identified in the current size question wins.
+2. Otherwise, one unique prior customer selection of the form
+   `For table model, I'll choose Saga.` may establish the model.
+3. Only user-role selection statements count. Support lists, mentions, customer
+   availability questions and vague references do not establish a selection.
+4. Conflicting/unknown selections or ambiguous current model references yield the
+   global size union, explicitly qualified by `Size availability depends on model.`
+5. An ambiguous/unknown explicit current reference cannot fall back to an older
+   model selection. Repeated identical customer selections remain unambiguous.
+
+For a timber question the provider returns one `KnowledgeFact` containing:
+
+> Available timber options are Tassie Oak, American Oak, Messmate, Zebra, Blackwood, Myrtle, Marri, Camphor Laurel and Jarrah.
+
+For an explicit Sleek size question it returns:
+
+> Available table size options for Sleek are 7ft and 8ft.
+
+With no unique public model it returns:
+
+> Table sizes available across supported models are 7ft, 8ft and 9ft. Size availability depends on model.
+
+Each fact has `source_reference="Shared product option catalog"`. Source paths and
+hashes stay outside Support's prompt payload. `answer_facts` is a fresh list each
+call; both ticket fields remain null. No unrelated option categories are included.
+The existing context has a frozen shell but a mutable list, so callers receive
+independent copies instead of a cached context object.
+
+Target questions receive the SAME complete relevant option set as general option
+questions, including when the named candidate is unknown. The provider does not
+copy the queried candidate into authoritative facts. Same question/public model
+context produces identical knowledge regardless of scenario or architecture;
+neither label, scenario ground truth, customer action/state, nor evaluator data
+is accepted by the API.
+
+### Unchanged Support path and known limitations
+
+The future harness can pass provider output directly to the existing
+`process_customer_message(..., support_knowledge=context)` hook. Root forwards it
+as `handle_support_action(..., business_context=context)` only on a Support route.
+The provider does not influence classification or override routing. S03's mixed
+order-intent/model question may still be routed to order creation, where this
+knowledge is not consumed. That remains a pilot/integration risk, not something
+CS1-C silently repairs.
+
+Support projects facts into `ResponseContext.allowed_facts['answer_facts']` and
+uses its unchanged system prompt, qwen3:8b, `think=False`, structured response
+schema and last six public history messages. Sampling options remain unspecified
+in the existing call; future experiments should record model revision/effective
+settings. The provider output remains suitable for a future database/tool adapter
+without changing Support's interface.
+
+The static source is authoritative, but existing Support grounding does NOT prove
+semantic membership/completeness of generated nonnumeric options. Mocked tests
+show both `Available timber options include InventedWood.` and an incomplete
+`Available timber options include Marri.` pass the current checks. CS1-C does not
+repair or replace these responses; the exact public text is preserved for later
+evaluation/diagnosis. Numeric and other existing guards still apply.
+
+Compatibility tests pass representative public answers through unchanged mocked
+Support generation and the actual CS1-B parser:
+
+| Public answer format | Existing CS1-B result |
+| --- | --- |
+| `Available timber options include Marri.` | Accepted |
+| `Available timber options include Tassie Oak, Marri, Zebra.` | Accepted |
+| `Available timber options include Tassie Oak, Marri and Zebra.` | Accepted |
+| `We offer several timber choices. Available timber options include Tassie Oak, Marri and Zebra.` | Rejected as uninterpretable |
+| `Available timber options include:` followed by Markdown `-` item lines | Rejected as uninterpretable |
+
+A single-sentence paragraph matching the list grammar is accepted; the tested
+paragraph with introductory prose is rejected. These are format observations,
+not claims that every paragraph/bullet response has been exhaustively classified.
+Other generated phrasing, including model-qualified size answers, can likewise
+fall outside the narrow CS1-B grammar. No CS1-B change or Support wording
+constraint is included. A later approval must choose grammar extensions,
+constrained wording, or deterministic presentation if desired.
+
+### Failure behavior and validation
+
+Missing source files, malformed records, missing required option sets, conflicting
+duplicates and hash mismatch raise `KnowledgeValidationError` during setup.
+Unsupported/ambiguous public queries return `None`. If routed to ANSWER_ENQUIRY,
+absent knowledge follows existing `INFORMATION_UNAVAILABLE` behavior. No fact is
+invented to recover from either case.
+
+Support generation/JSON/grounding errors propagate unchanged. On the enquiry path
+runtime wraps them as `TurnFailure(phase="business execution", pending_turn=None)`;
+there is no PendingTurn for Support enquiry generation. PendingTurn remains the
+separate existing business-result response-composition mechanism. No automatic
+retry, state mutation, message repair or persistence is added.
+
+`test_static_product_knowledge.py` covers exact options/order, provenance ownership,
+source errors, topic grammar, public model context, immutable snapshot/fresh
+contexts, target/architecture independence, hidden-value exclusion, mocked Support
+payloads, a single mocked runtime Support turn, failure behavior, parser format
+compatibility and the grounding limitation. It does not run full conversations.
+
+CS1-C adds only the provider and its tests plus this documentation. No Support,
+Root, Classifier, runtime, Order Agent, Controller, CS1-A/CS1-B or catalog changes
+are required. CS1-D and real experiment execution remain outside this stage.
