@@ -3,7 +3,8 @@
 import json
 from typing import Literal
 
-from ollama import chat
+# from ollama import chat
+from llm_client import chat
 from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
 
 from order_creation_state import OrderCreationState
