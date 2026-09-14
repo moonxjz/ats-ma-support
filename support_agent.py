@@ -10,7 +10,8 @@ from enum import Enum
 import json
 import re
 
-from ollama import chat
+# from ollama import chat
+from llm_client import chat
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_validator
 
 from business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
