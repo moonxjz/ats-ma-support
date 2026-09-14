@@ -66,8 +66,6 @@ def chat(
                 "strict": True
             }
         }
-    else:
-        params["response_format"] = {"type": "json_object"}
 
     
     response = client.chat.completions.create(**params)
