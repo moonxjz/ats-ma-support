@@ -1,0 +1,242 @@
+{
+  "schema_version": "2",
+  "scenario_id": "S05",
+  "name": "Invalid Room Size Resolved by Changing Table Size",
+  "source": {
+    "source_file": "evaluation/scenario_sources/Conversation Scenario-CSimulator.xlsx",
+    "worksheet": "Conversation Profiles",
+    "source_sha256": "476c83d6b597decd258292d43e83314156a5b71cfd1f45560a37a6beb6578128",
+    "source_version": "Authoritative Conversation Scenario Source v1",
+    "scenario_column": "F"
+  },
+  "initial_state": {
+    "conversation": "EMPTY",
+    "order_store": "EMPTY_ISOLATED"
+  },
+  "fixtures": {
+    "product_catalog": {
+      "path": "data/product_prices.json",
+      "sha256": "ef8ac04e8ac00a6690f60ecd53b4418fbc4bdd3ccc2d527e65cdb2afdb9cc007"
+    },
+    "shipping": {
+      "path": "data/shipping_rates.json",
+      "sha256": "933d9ef7ac2910e74642f874e30a78be97935a48a19defe7f3d6f9ec72650cb3"
+    }
+  },
+  "customer": {
+    "description": "  - Customer knows the product and provides all custom configuration selections in the initial message.\n  - Initial 8ft configuration fails VALIDATE_CONFIGURATION because the room size is insufficient for the selected table size.\n  - Customer resolves the validation failure by changing the table size from 8ft to 7ft.\n  - Revised 7ft configuration passes VALIDATE_CONFIGURATION.\n  - Customer passes CONFIGURATION_CONFIRMATION without requesting any changes.\n  - Customer passes FINAL_CONFIRMATION without requesting any changes.",
+    "ground_truth": {
+      "customer": {
+        "customer_name": "Demo5 Customer5",
+        "phone": "0400000005",
+        "email": "customer5@example.com",
+        "company_name": null,
+        "customer_instructions": null
+      },
+      "delivery_address": {
+        "address": "5 Example Street",
+        "city": "Perth Metro",
+        "state": "WA",
+        "postcode": "6001",
+        "country": "Australia"
+      },
+      "room_size": "5.0m x 4.0m",
+      "configuration": {
+        "product_model": "Regent",
+        "table_size": "7ft",
+        "timber": "Tassie Oak",
+        "timber_painting": "Black",
+        "felt_color": "Grey",
+        "bracket": "Standard rubber",
+        "top_profile": "Waterfall",
+        "quantity": 1
+      },
+      "initial_configuration_overrides": {
+        "table_size": "8ft"
+      }
+    },
+    "initial_message": "I'd like to order one 8ft Regent pool table with a Waterfall top profile and Standard rubber. I'd like Tassie Oak timber with a Black finish and Grey felt.",
+    "initial_disclosures": [
+      "product_model",
+      "table_size",
+      "timber",
+      "timber_painting",
+      "felt_color",
+      "bracket",
+      "top_profile",
+      "quantity"
+    ],
+    "initially_known_configuration_fields": [
+      "product_model",
+      "table_size",
+      "timber",
+      "timber_painting",
+      "felt_color",
+      "bracket",
+      "top_profile"
+    ],
+    "conversation_policy": {
+      "disclosure": {
+        "type": "ANSWER_REQUESTED_INFORMATION"
+      },
+      "configuration_selection": null,
+      "configuration_confirmation": {
+        "type": "CONFIRM_WITHOUT_CHANGE",
+        "response": {
+          "type": "EXACT_TEXT",
+          "text": "Yes, that configuration is correct."
+        }
+      },
+      "validation_failure_response": {
+        "modifications": [
+          {
+            "field": "table_size",
+            "from": "INITIAL_OVERRIDE",
+            "to": "FINAL_TARGET"
+          }
+        ],
+        "response": {
+          "type": "EXACT_TEXT",
+          "text": "In that case, please change the table size from 8ft to 7ft."
+        },
+        "type": "MODIFY_CONFIGURATION",
+        "trigger": "ROOM_SIZE_UNSUITABLE"
+      },
+      "final_confirmation": {
+        "type": "CONFIRM_WITHOUT_CHANGE",
+        "response": {
+          "type": "EXACT_TEXT",
+          "text": "Yes, everything looks good. Please go ahead with the order."
+        }
+      }
+    }
+  },
+  "evaluation": {
+    "system_derived": {
+      "pricing": [
+        {
+          "phase": "FINAL",
+          "expectation_type": "EXECUTED",
+          "product_sku": "B7REGENT",
+          "pricing": {
+            "base_model_price": "5800",
+            "customisation_price": "800",
+            "unit_price": "6600",
+            "shipping_cost": "2800",
+            "total_price": "9400"
+          }
+        }
+      ]
+    },
+    "workflow": {
+      "milestones": [
+        {
+          "kind": "VALIDATION",
+          "id": "INITIAL_VALIDATION",
+          "phase": "INITIAL",
+          "result": {
+            "status": "INVALID",
+            "reason": "ROOM_SIZE_UNSUITABLE"
+          }
+        },
+        {
+          "kind": "CONFIGURATION_CHANGE",
+          "id": "CONFIGURATION_CHANGE",
+          "status": "APPLIED",
+          "changed_fields": [
+            "table_size"
+          ],
+          "material_change_detected": true,
+          "price_recalculation_required": true
+        },
+        {
+          "kind": "VALIDATION",
+          "id": "FINAL_VALIDATION",
+          "phase": "FINAL",
+          "result": {
+            "status": "VALID"
+          }
+        },
+        {
+          "kind": "CONFIGURATION_REVIEW",
+          "id": "FINAL_REVIEW",
+          "phase": "FINAL",
+          "result": {
+            "status": "CONFIRMED"
+          }
+        },
+        {
+          "kind": "PRICING",
+          "id": "FINAL_PRICING",
+          "phase": "FINAL",
+          "status": "COMPLETED"
+        },
+        {
+          "kind": "FINAL_CONFIRMATION",
+          "id": "FINAL_CONFIRMATION",
+          "result": {
+            "status": "CONFIRMED"
+          }
+        },
+        {
+          "kind": "ORDER_CREATION",
+          "id": "ORDER_CREATION",
+          "status": "EXECUTED"
+        },
+        {
+          "kind": "TERMINATION",
+          "id": "TERMINATION",
+          "status": "COMPLETED",
+          "side_effect_allowed": true
+        }
+      ],
+      "precedence": [
+        {
+          "before": "INITIAL_VALIDATION",
+          "after": "CONFIGURATION_CHANGE"
+        },
+        {
+          "before": "CONFIGURATION_CHANGE",
+          "after": "FINAL_VALIDATION"
+        },
+        {
+          "before": "FINAL_VALIDATION",
+          "after": "FINAL_REVIEW"
+        },
+        {
+          "before": "FINAL_REVIEW",
+          "after": "FINAL_PRICING"
+        },
+        {
+          "before": "FINAL_PRICING",
+          "after": "FINAL_CONFIRMATION"
+        },
+        {
+          "before": "FINAL_CONFIRMATION",
+          "after": "ORDER_CREATION"
+        },
+        {
+          "before": "ORDER_CREATION",
+          "after": "TERMINATION"
+        }
+      ]
+    },
+    "outcome": {
+      "result_status": "SUCCESS",
+      "reason": "ORDER_CREATED",
+      "workflow_status": "COMPLETED",
+      "expected_persisted_order_count": 1
+    },
+    "invariants": {
+      "I1": "SATISFIED",
+      "I2": "SATISFIED",
+      "I3": "SATISFIED",
+      "I4": "NOT_EXERCISED",
+      "I5": "SATISFIED",
+      "I6": "SATISFIED",
+      "I7": "SATISFIED",
+      "I8": "SATISFIED"
+    },
+    "interaction_properties": []
+  }
+}

@@ -1,0 +1,210 @@
+{
+  "schema_version": "2",
+  "scenario_id": "S04",
+  "name": "Valid Configuration but Customer Abandons at Final Confirmation",
+  "source": {
+    "source_file": "evaluation/scenario_sources/Conversation Scenario-CSimulator.xlsx",
+    "worksheet": "Conversation Profiles",
+    "source_sha256": "476c83d6b597decd258292d43e83314156a5b71cfd1f45560a37a6beb6578128",
+    "source_version": "Authoritative Conversation Scenario Source v1",
+    "scenario_column": "E"
+  },
+  "initial_state": {
+    "conversation": "EMPTY",
+    "order_store": "EMPTY_ISOLATED"
+  },
+  "fixtures": {
+    "product_catalog": {
+      "path": "data/product_prices.json",
+      "sha256": "ef8ac04e8ac00a6690f60ecd53b4418fbc4bdd3ccc2d527e65cdb2afdb9cc007"
+    },
+    "shipping": {
+      "path": "data/shipping_rates.json",
+      "sha256": "933d9ef7ac2910e74642f874e30a78be97935a48a19defe7f3d6f9ec72650cb3"
+    }
+  },
+  "customer": {
+    "description": "  - Customer knows the product and provides all custom configuration selections in the initial message.\n  - Initial configuration passes VALIDATE_CONFIGURATION.\n  - Customer passes CONFIGURATION_CONFIRMATION without requesting any changes.\n  - At FINAL_CONFIRMATION, customer changes their mind and decides not to proceed with the purchase.",
+    "ground_truth": {
+      "customer": {
+        "customer_name": "Demo4 Customer4",
+        "phone": "0400000004",
+        "email": "customer4@example.com",
+        "company_name": null,
+        "customer_instructions": null
+      },
+      "delivery_address": {
+        "address": "4 Example Street",
+        "city": "Perth Metro",
+        "state": "WA",
+        "postcode": "6001",
+        "country": "Australia"
+      },
+      "room_size": "5.0m x 4.0m",
+      "configuration": {
+        "product_model": "Sleek",
+        "table_size": "7ft",
+        "timber": "Jarrah",
+        "timber_painting": "Natural",
+        "felt_color": "Red",
+        "bracket": "Standard rubber",
+        "top_profile": "Waterfall",
+        "quantity": 1
+      },
+      "initial_configuration_overrides": {}
+    },
+    "initial_message": "I'd like to order one 7ft Sleek pool table with a Waterfall top profile and Standard rubber. I'd like Jarrah timber with a Natural finish and Red felt.",
+    "initial_disclosures": [
+      "product_model",
+      "table_size",
+      "timber",
+      "timber_painting",
+      "felt_color",
+      "bracket",
+      "top_profile",
+      "quantity"
+    ],
+    "initially_known_configuration_fields": [
+      "product_model",
+      "table_size",
+      "timber",
+      "timber_painting",
+      "felt_color",
+      "bracket",
+      "top_profile"
+    ],
+    "conversation_policy": {
+      "disclosure": {
+        "type": "ANSWER_REQUESTED_INFORMATION"
+      },
+      "configuration_selection": null,
+      "configuration_confirmation": {
+        "type": "CONFIRM_WITHOUT_CHANGE",
+        "response": {
+          "type": "EXACT_TEXT",
+          "text": "Yes, that configuration is correct."
+        }
+      },
+      "validation_failure_response": null,
+      "final_confirmation": {
+        "type": "REJECT_AND_ABANDON",
+        "customer_intent": "ABANDON_PURCHASE",
+        "response": {
+          "type": "EXACT_TEXT",
+          "text": "Actually, I've changed my mind and don't want to go ahead with the order anymore. Please don't place the order."
+        }
+      }
+    }
+  },
+  "evaluation": {
+    "system_derived": {
+      "pricing": [
+        {
+          "phase": "FINAL",
+          "expectation_type": "EXECUTED",
+          "product_sku": "B7SLEEK",
+          "pricing": {
+            "base_model_price": "7000",
+            "customisation_price": "800",
+            "unit_price": "7800",
+            "shipping_cost": "2800",
+            "total_price": "10600"
+          }
+        }
+      ]
+    },
+    "workflow": {
+      "milestones": [
+        {
+          "kind": "REQUIREMENTS",
+          "id": "REQUIREMENTS",
+          "status": "COMPLETE"
+        },
+        {
+          "kind": "VALIDATION",
+          "id": "FINAL_VALIDATION",
+          "phase": "FINAL",
+          "result": {
+            "status": "VALID"
+          }
+        },
+        {
+          "kind": "CONFIGURATION_REVIEW",
+          "id": "FINAL_REVIEW",
+          "phase": "FINAL",
+          "result": {
+            "status": "CONFIRMED"
+          }
+        },
+        {
+          "kind": "PRICING",
+          "id": "FINAL_PRICING",
+          "phase": "FINAL",
+          "status": "COMPLETED"
+        },
+        {
+          "kind": "FINAL_CONFIRMATION",
+          "id": "FINAL_CONFIRMATION",
+          "result": {
+            "status": "REJECTED",
+            "customer_intent": "ABANDON_PURCHASE"
+          }
+        },
+        {
+          "kind": "ORDER_CREATION",
+          "id": "ORDER_CREATION",
+          "status": "NOT_EXECUTED"
+        },
+        {
+          "kind": "TERMINATION",
+          "id": "TERMINATION",
+          "status": "CANCELLED",
+          "side_effect_allowed": false
+        }
+      ],
+      "precedence": [
+        {
+          "before": "REQUIREMENTS",
+          "after": "FINAL_VALIDATION"
+        },
+        {
+          "before": "FINAL_VALIDATION",
+          "after": "FINAL_REVIEW"
+        },
+        {
+          "before": "FINAL_REVIEW",
+          "after": "FINAL_PRICING"
+        },
+        {
+          "before": "FINAL_PRICING",
+          "after": "FINAL_CONFIRMATION"
+        },
+        {
+          "before": "FINAL_CONFIRMATION",
+          "after": "ORDER_CREATION"
+        },
+        {
+          "before": "ORDER_CREATION",
+          "after": "TERMINATION"
+        }
+      ]
+    },
+    "outcome": {
+      "result_status": "TERMINATED",
+      "reason": "CUSTOMER_CANCELLED",
+      "workflow_status": "CANCELLED",
+      "expected_persisted_order_count": 0
+    },
+    "invariants": {
+      "I1": "SATISFIED",
+      "I2": "SATISFIED",
+      "I3": "SATISFIED",
+      "I4": "NOT_EXERCISED",
+      "I5": "SATISFIED",
+      "I6": "SATISFIED",
+      "I7": "NOT_EXERCISED",
+      "I8": "SATISFIED"
+    },
+    "interaction_properties": []
+  }
+}

@@ -1,3 +1,93 @@
+# ScenarioSpec v2 — Stage V2-B (inactive candidates)
+
+The five files in `evaluation/scenarios_v2_candidates/` are **NOT ACTIVE**.
+`scenario_loader.py` still reads v1 `evaluation/scenarios/`. No simulator,
+runner, evaluator or production capability has been migrated. V2-C business
+validation has not run; source fidelity is not proof of execution readiness.
+
+`evaluation.scenario_extractor_v2` (`EXTRACTOR_VERSION = "v2-b-1"`) reads the
+frozen workbook directly with read-only ZIP/XML operations. It never imports
+legacy fixtures, agents, pricing/shipping lookups or a workbook-writing library.
+Source SHA-256 remains
+`476c83d6b597decd258292d43e83314156a5b71cfd1f45560a37a6beb6578128`.
+The source version is **Authoritative Conversation Scenario Source v1**, worksheet
+`Conversation Profiles`; columns B/C/D/E/F map explicitly to S01/S02/S03/S04/S05.
+
+`ColumnLayout` and the fixed shared-row readers form the versioned mapping.
+Every populated source cell has a `CellUse(cell, destination)` entry. Scalars
+have checked labels, headings are consumed as structure, and multiline override
+blocks are parsed in full. Duplicate target selections and repeated price claims
+are checked against their canonical extracted values rather than duplicated in
+JSON. No populated cell is silently ignored. The Chinese overview in row 1 is
+an explicitly pinned corroborating summary of the detailed customer/workflow
+sections, not customer speech or an extra runtime field. Its exact-text hashes
+are part of the mapping. Description cells and spoken-text cells retain every
+character; removing a structured label/JSON quotation syntax is not text repair.
+
+All populated cells outside the mapped B1:F133 source region are rejected.
+Within it, unexpected populated cells, required blanks, changed labels and
+unconsumed content fail closed. Blank/formatting-only cells are listed separately;
+no structural populated cell is ignored. Per-scenario accounting:
+
+| Scenario | Consumed populated cells | Explicit blank cells |
+| --- | ---: | ---: |
+| S01 | 74 | 59 |
+| S02 | 105 | 28 |
+| S03 | 109 | 24 |
+| S04 | 92 | 41 |
+| S05 | 100 | 33 |
+
+Approved extraction defaults/mappings are distinguished from source cells:
+
+- EMPTY conversation / EMPTY_ISOLATED store are harness defaults. Shared catalog
+  and shipping paths/hashes are approved static fixture references; their content
+  is not read or validated in V2-B. Optional company/instructions remain omitted
+  during construction and serialize as the contract's None/null defaults.
+- Complete-knowledge overview plus direct disclosure establishes known fields;
+  S02's seven UNKNOWN declarations establish discovery instead. Redundant target
+  values are checked against final ground truth and serialized once.
+- Literal modification from/to values are checked against sparse overrides/final
+  targets, then encoded as INITIAL_OVERRIDE / FINAL_TARGET references.
+- S03 initial pricing is REFERENCE_BASELINE; final pricing is EXECUTED. S05 has
+  final pricing only. No initial pricing execution is inferred.
+- Required product changes map to material configuration change; revised pricing
+  is required for the changed target, not asserted to have already executed.
+  S05 CONFIGURATION_MODIFIED maps to APPLIED. Unchanged-review flags are checked
+  and represented by unchanged confirmation policies and confirmed review.
+- Final pricing implies FINAL_PRICING. Successful/cancelled outcomes supply
+  creation/termination expectations where those are not separately authored.
+  Precedence follows the approved trajectory: revised validation, revised
+  confirmation, then final pricing. A reference price creates no execution edge.
+- S03 I4 remains NOT_EXERCISED, independently of snapshot obsolescence. S04 retains
+  cancellation/zero orders despite the production gap. S05 retains
+  ROOM_SIZE_UNSUITABLE. No workbook, source contract or expectations are repaired.
+
+Each candidate embeds the source path, worksheet, hash, version and column.
+Extractor version stays in code/tests, avoiding a V2-A schema change. JSON uses
+validated model field order, UTF-8 without ASCII escaping, two-space indentation,
+and a trailing newline; it contains no timestamps or absolute local paths.
+The serializer reads only validated ScenarioSpecV2 objects. The fidelity audit
+compares the complete candidate against the workbook projection, including exact
+responses and provenance; generic Pydantic validation alone is insufficient.
+
+Generation and explicit safe validation:
+
+```sh
+python -m evaluation.scenario_extractor_v2
+python -m unittest test_scenario_extractor_v2 test_scenario_spec_v2 test_scenario_spec -v
+```
+
+Tests independently assert workbook-authored critical values, every price bundle,
+all invariants/interactions and exact speech. Temporary-copy mutations exercise
+hash failure; decoded-source mutations also exercise structural gates beyond the
+hash check. Repeated generation in a temporary directory is compared byte-for-byte
+with both its first pass and the repository candidate bytes. Authoritative workbook
+bytes are never modified. Candidate `customer_view()` excludes all evaluator and
+source/harness metadata.
+
+The earlier V2-A and legacy v1 sections below describe their respective stage
+boundaries; the V2-A statement that no JSON existed was true at that stage.
+
 # ScenarioSpec v2 — Stage V2-A (inactive contract)
 
 `evaluation.scenario_spec_v2.ScenarioSpecV2` is a separate, strict, immutable
