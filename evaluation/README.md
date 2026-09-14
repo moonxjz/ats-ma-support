@@ -1,3 +1,88 @@
+# ScenarioSpec v2 — Stage V2-A (inactive contract)
+
+`evaluation.scenario_spec_v2.ScenarioSpecV2` is a separate, strict, immutable
+contract. The active `scenario_spec.py`, `scenario_loader.py`, S01–S03 JSON,
+CS1/CS2 simulators and ExperimentRunner still use v1. No authoritative v2 JSON
+has been generated. Workbook extraction and source fidelity checks begin only
+in V2-B; repository business validation belongs to V2-C.
+
+The frozen five-scenario source is
+`scenario_sources/Conversation Scenario-CSimulator.xlsx`, worksheet
+`Conversation Profiles`, source version **Authoritative Conversation Scenario
+Source v1**, committed at `bbd48f5af709c56db7433e891becba124bdc5e29`.
+SHA-256: `476c83d6b597decd258292d43e83314156a5b71cfd1f45560a37a6beb6578128`.
+The generic `ScenarioSource` validates portable paths, hashes and Excel columns;
+it does not pin this workbook or map scenario IDs to cells.
+
+V2 has explicit `source`, `initial_state`, `fixtures`, `customer` and `evaluation`
+sections, plus `schema_version="2"`, `scenario_id` and `name`. Official identifiers
+are S01–S05. Duplicate identifiers across files remain a repository-level check.
+Use `ScenarioSpecV2.model_validate_json(...)` for strict JSON construction; Python
+construction uses tuples and enum instances. Models reject extra fields and
+coercion. Pydantic's trusted `model_construct`/`model_copy(update=...)` APIs are
+not validation entry points.
+
+Stable v1 value objects reused unchanged: CustomerDetails, DeliveryAddress,
+TargetConfiguration, PricingExpectations, SharedFixtures/FileReference and
+InvariantExpectations, plus scalar/field aliases. Policies, ground truth,
+workflow, outcomes and provenance have separate v2 structures. No active v1
+consumer imports the v2 contract.
+
+The canonical final customer configuration is stored once. Fixed-field sparse
+`initial_configuration_overrides` inherits omitted fields and rejects explicit
+nulls and redundant values. Serialization omits unset override fields.
+`ground_truth.resolve_effective_configuration(ConfigurationPhase.INITIAL)`
+overlays overrides; FINAL returns a fresh immutable final configuration.
+`ConfigurationModification` serializes `field`, `from="INITIAL_OVERRIDE"` and
+`to="FINAL_TARGET"`; `resolve(ground_truth)` returns typed from/to values.
+Every override needs a matching policy path. The bounded INITIAL→FINAL model
+rejects competing revision/recovery triggers rather than inventing intermediate
+configuration phases.
+
+Policies describe public-triggered customer behavior; they do not execute it.
+Discovery selects only after positive public observation. Configuration review
+requires a matching effective public snapshot and explicit request. Final
+approval requires the matching public order, explicit placement request and
+current configuration approval. Exact authored responses attach to their policy
+events; they are neither normalized nor treated as authorization. This stage
+validates response structure/placement, not natural-language meaning.
+
+Approved semantics carried into the contract:
+
+- S03 initial pricing is REFERENCE_BASELINE, without a pricing-execution milestone.
+  Final pricing is EXECUTED, linked to FINAL_PRICING. Partial precedence permits
+  revised validation → revised confirmation → final pricing. It does not force
+  pricing before confirmation.
+- S03 I4 is NOT_EXERCISED. `prior_configuration_snapshot_invalidated` is a separate
+  interaction property. Generic validators never infer or rewrite invariants.
+- S04 TERMINATED/CUSTOMER_CANCELLED/CANCELLED requires rejected final confirmation,
+  NOT_EXECUTED order creation, forbidden side effects and zero expected orders.
+  Production cancellation remains unimplemented; these are expectations only.
+- S05 recovery uses ROOM_SIZE_UNSUITABLE, initial invalid/final valid validation,
+  and final executed pricing only. No initial pricing is required.
+
+Workflow milestones use discriminated payloads and bounded IDs. Precedence is a
+validated acyclic partial order with unique, existing references. Pricing values
+use decimal strings and phase-effective quantity arithmetic; no catalog,
+shipping, room-validation, store or runtime calls occur in this contract.
+Production result mapping, observed evidence/scoring and execution remain later
+stages. The CS2 trace schema is unchanged.
+
+`customer_view()` returns an independent immutable customer projection including
+initial overrides and authored behavior. It excludes provenance, harness defaults,
+fixtures and every evaluator section. Harness defaults are explicitly EMPTY
+conversation and EMPTY_ISOLATED order store outside that projection.
+
+Synthetic contract checks (not source projections):
+
+```sh
+python -m unittest test_scenario_spec_v2 -v
+```
+
+Run only explicitly selected deterministic modules; unrestricted discovery can
+import `test_api.py`, which performs a live call. The v1 documentation below
+records the still-active legacy fixtures and historical development.
+
 # ScenarioSpec v1 (CS1-A)
 
 This directory contains architecture-neutral, frozen ORDER_CREATE benchmark
