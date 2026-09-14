@@ -66,33 +66,11 @@ def chat(
                 "strict": True
             }
         }
-        # 将格式指令添加到 system prompt
-        format_instruction = (
-            "Reply with exactly one valid JSON object and nothing else. "
-            "You MUST include ALL fields from the schema. "
-            "Do NOT simplify, truncate, or omit any fields. "
-            "Return the complete JSON object with all required fields."
-        ) + "\nJson_schema: " + json.dumps(format, ensure_ascii=False)
-        if messages and messages[0].get("role") == "system":
-            messages[0]["content"] += "\n\n" + format_instruction
-        else:
-            messages.insert(0, {"role": "system", "content": format_instruction})
     else:
         params["response_format"] = {"type": "json_object"}
 
     
     response = client.chat.completions.create(**params)
     content = response.choices[0].message.content
-    
-    # 清理可能的 Markdown 代码块标记
-    if content:
-        content = content.strip()
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
     
     return ChatResponse(content)

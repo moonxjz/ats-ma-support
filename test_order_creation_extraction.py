@@ -124,7 +124,7 @@ class OrderInformationExtractionTests(unittest.TestCase):
         self.assertEqual(args["model"], "qwen3:8b")
         self.assertIs(args["think"], False)
         self.assertEqual(args["options"], {"temperature": 0})
-        self.assertEqual(args["format"], ExtractedOrderInformation.model_json_schema())
+        self.assertEqual(args["format"], ExtractedOrderInformation)
         self.assertEqual(args["messages"][0]["role"], "system")
         prompt = args["messages"][0]["content"]
         for instruction in ("primary evidence", "Do not independently re-extract",

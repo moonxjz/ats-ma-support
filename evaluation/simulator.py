@@ -1,8 +1,10 @@
 """Lightweight LLM Customer Simulator - Responds to order_agent based on scenario facts and strategy"""
 import json
 from pathlib import Path
-from ollama import chat
+# from ollama import chat
+from llm_client import chat
 from order_agent import OrderCreationState
+from order_creation_extraction import ConversationMessage
 
 MODEL_NAME = "qwen3:4b"
 HISTORY_LIMIT = 5
@@ -111,7 +113,7 @@ class SimpleCustomerSimulator:
         
         return '\n'.join(policy_parts)
     
-    def __call__(self, public_history: list[dict] | None = None) -> str:
+    def __call__(self, public_history: list[ConversationMessage] | None = None) -> str:
         """Generate the next customer message
         
         Args:
@@ -131,8 +133,8 @@ class SimpleCustomerSimulator:
         
         for msg in public_history:
             messages.append({
-                "role": "user" if msg['role'] == 'assistant' else "assistant",
-                "content": msg['content']
+                "role": "user" if msg.role == 'assistant' else "assistant",
+                "content": msg.content
             })
         
         response = chat(
@@ -161,7 +163,6 @@ def run_conversation(scenario_path: str | Path, order_agent_fn, support_agent_fn
     
     Args:
         scenario_path: Path to scenario JSON file
-        llm_chat_fn: LLM invocation function
         order_agent_fn: Order agent function, receives customer_message and returns agent_response
         max_turns: Maximum number of conversation turns
     
@@ -177,10 +178,6 @@ def run_conversation(scenario_path: str | Path, order_agent_fn, support_agent_fn
         history.append({"role": "user", "content": customer_message})
         print(f"\n[Customer Turn {turn+1}]\n{customer_message}")
         
-        if customer_message in ("Yes, that configuration is correct.", 
-                                "Yes, I confirm the final order and would like to place it."):
-            print("\n[Conversation Ended] Customer has confirmed the order")
-            break
         
         order_state, result = order_agent_fn(customer_message, history, order_state)
         agent_response = support_agent_fn(result, current_message=customer_message, conversation_history=history).text

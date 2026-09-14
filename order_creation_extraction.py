@@ -132,6 +132,19 @@ def extract_order_information(
         options={"temperature": 0},
     )
     content = response.message.content
+
+        # 递归删除 null 字段
+    def remove_null_fields(obj):
+        if isinstance(obj, dict):
+            return {k: remove_null_fields(v) for k, v in obj.items() if v is not None}
+        elif isinstance(obj, list):
+            return [remove_null_fields(item) for item in obj]
+        return obj
+    
+    parsed = json.loads(content)
+    cleaned = remove_null_fields(parsed)
+    content = json.dumps(cleaned, ensure_ascii=False)
+    
     if content is None or not content.strip():
         raise ValueError("Ollama returned an empty extraction response.")
     return ExtractedOrderInformation.model_validate_json(content)

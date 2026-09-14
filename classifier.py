@@ -3,7 +3,8 @@
 import json
 from enum import Enum
 
-from ollama import chat
+# from ollama import chat
+from llm_client import chat
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_validator
 
 from order_creation_extraction import ConversationMessage
