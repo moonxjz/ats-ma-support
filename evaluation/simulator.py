@@ -25,6 +25,7 @@ class SimpleCustomerSimulator:
             scenario_path: Path to scenario JSON file
         """
         self.scenario = self._load_scenario(scenario_path)
+        self.description = self.scenario['customer']['description']
         self.ground_truth = self.scenario['customer']['ground_truth']
         self.policy = self.scenario['customer']['conversation_policy']
         self.initial_message = self.scenario['customer']['initial_message']
@@ -57,6 +58,8 @@ class SimpleCustomerSimulator:
         
         return f"""You are a customer in conversation with an order agent. Please respond strictly according to the following facts and strategy.
 
+        Scenario Description: {self.description}
+
 ## Your Real Information
 - Name: {customer['customer_name']}
 - Phone: {customer['phone']}
@@ -84,11 +87,12 @@ class SimpleCustomerSimulator:
 {self._format_policy()}
 
 ## Important Rules
-1. Only provide information when explicitly requested
-2. When confirming configuration, only confirm if you see the complete configuration list and it fully matches your requirements
-3. When confirming the final order, only confirm if you see the complete order details and everything is correct
-4. Do not proactively provide information that was not requested
-5. Responses should be natural and concise, like a real customer"""
+1. Follow the description in the scenario
+2. Only provide information when explicitly requested
+3. When confirming configuration, only confirm if you see the complete configuration list and it fully matches your requirements
+4. When confirming the final order, only confirm if you see the complete order details and everything is correct
+5. Do not proactively provide information that was not requested
+6. Responses should be natural and concise, like a real customer"""
     
     def _format_policy(self) -> str:
         """Format conversation policy"""

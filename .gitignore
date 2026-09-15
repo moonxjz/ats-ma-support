@@ -25,3 +25,6 @@ workflows.json
 tasks.json
 evaluation_runs/
 
+#logs
+logs/
+

@@ -10,6 +10,7 @@ from conversation_runtime import ConversationSession, TurnFailure, process_custo
 from order_agent import process_order_creation_message
 from order_creation_order_store import DEFAULT_ORDER_STORE_PATH
 from evaluation.simulator import create_simple_simulator
+from tools.knowledge_tool import load_product_prices_as_knowledge
 
 logger = logging.getLogger("ats_support_cli")
 
@@ -81,7 +82,7 @@ def main():
         print(message)
         logger.info('Customer message (turn %d): %s', turn, message)
         result = (retry_pending_response(session, pending) if pending else
-                                process_customer_message(session, message, order_creation_processor=processor))
+                                process_customer_message(session, message, order_creation_processor=processor, support_knowledge=load_product_prices_as_knowledge()))
         # try:
         #     result = (retry_pending_response(session, pending) if pending else
         #                 process_customer_message(session, message, order_creation_processor=processor))
