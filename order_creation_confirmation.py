@@ -19,6 +19,7 @@ class ConfirmationIntent(str, Enum):
     CHANGE_REQUESTED = "CHANGE_REQUESTED"
     DECLINED = "DECLINED"
     AMBIGUOUS = "AMBIGUOUS"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
 
 
 class ConfirmationInterpretation(BaseModel):
@@ -38,6 +39,12 @@ not order cancellation.
 CHANGE_REQUESTED: the customer requests any correction or modification, with or
 without concrete replacement values. This takes precedence over approval in mixed
 messages such as "Yes, but change the quantity". Do not extract values yourself.
+CANCEL_REQUESTED: explicit abandonment of the entire current order request, such
+as "I don't want to proceed", "Cancel this order", or "I don't want
+to place the order". The cancellation must target the whole order request, not
+just a single option or field. Contradictory messages like "Cancel... actually,
+let's continue" are AMBIGUOUS. Conditional statements, references to historical
+messages, or hypothetical questions are not cancellation.
 AMBIGUOUS: uncertainty, questions such as 'What size did I choose again?',
 'I'm not sure', or an unclear/missing/conflicting confirmation referent.
 
@@ -67,6 +74,12 @@ Configuration approval alone is not final purchase authorization.
 DECLINED: rejection such as bare 'No.'; not automatic cancellation.
 CHANGE_REQUESTED: any requested correction or modification, with or without
 concrete replacement values. Changes take precedence over approval in mixed replies.
+CANCEL_REQUESTED: explicit abandonment of the entire current order request, such
+as "I don't want to proceed", "Cancel this order request", or "I don't
+want to place the order". The cancellation must target the whole order, not just
+a single option or field. Contradictory messages like "Cancel... actually, let's
+continue" are AMBIGUOUS. Conditional statements, references to historical messages,
+or hypothetical questions are not cancellation.
 AMBIGUOUS: uncertainty, questions (including price/shipping questions), or unclear
 referents. Conditions, corrections, and 'Yes, but...' are not unqualified approval.
 Interpret intent before any order-data extraction or merge. Do not extract values.

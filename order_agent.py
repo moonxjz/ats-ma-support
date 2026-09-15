@@ -68,6 +68,9 @@ def process_order_creation_message(
                 result = _execute_with_optional_store_path(updated, order_store_path=order_store_path)
                 return updated, result
             working = updated
+        elif confirmation.intent == ConfirmationIntent.CANCEL_REQUESTED:
+            # Cancellation goes directly to Controller; no extraction or merge.
+            pass
         evidence = ({"final_confirmation": confirmation, "final_confirmation_snapshot": snapshot}
                     if final else {"confirmation": confirmation, "confirmation_snapshot": snapshot})
         result = _execute_with_optional_store_path(working, order_store_path=order_store_path, **evidence)

@@ -173,6 +173,40 @@ def handle_create_order(
     )
 
 
+def handle_cancel_order_creation(state: OrderCreationState) -> BusinessResult:
+    """Terminate the workflow due to customer cancellation request.
+
+    Preserves customer data, quotes, and snapshots for traceability.
+    Does not call order storage or create any order.
+    """
+    if state.current_stage != OrderCreationStage.FINAL_CONFIRMATION:
+        raise ValueError("Cancel requires current_stage=FINAL_CONFIRMATION.")
+    if state.status == OrderWorkflowStatus.COMPLETED:
+        raise ValueError("Cannot cancel a completed workflow.")
+    if state.final_order_confirmed is True:
+        raise ValueError("Cannot cancel after final authorization.")
+
+    now = current_utc_time()
+    state.status = OrderWorkflowStatus.CANCELLED
+    state.pending_confirmations = []
+    state.pending_field = None
+    state.last_question = None
+    state.final_order_confirmed = False
+    state.updated_at = now
+
+    return BusinessResult(
+        workflow_id=state.workflow_id,
+        source_agent="ORDER_AGENT",
+        action="CREATE_ORDER",
+        current_stage=state.current_stage.value,
+        result_status=BusinessResultStatus.CANCELLED,
+        reason=BusinessResultReason.CUSTOMER_CANCELLED,
+        data={"confirmation_intent": "CANCEL_REQUESTED"},
+        required_input=[],
+        error=None,
+    )
+
+
 def handle_final_confirmation(
     state: OrderCreationState,
     *,
@@ -204,6 +238,8 @@ def handle_final_confirmation(
                 or evidence != state.final_order_snapshot
                 or not final_order_snapshot_matches(state, state.final_order_snapshot)):
             raise ValueError("Final confirmation evidence is not pending or is stale.")
+        if confirmation.intent == ConfirmationIntent.CANCEL_REQUESTED:
+            return handle_cancel_order_creation(state)
         if confirmation.intent == ConfirmationIntent.CONFIRMED:
             now = current_utc_time()
             state.final_order_confirmed = True
