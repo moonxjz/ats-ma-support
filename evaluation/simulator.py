@@ -97,15 +97,31 @@ class SimpleCustomerSimulator:
         config_confirm = self.policy.get('configuration_confirmation', {})
         if config_confirm:
             policy_parts.append("Configuration Confirmation Strategy:")
-            if config_confirm.get('behavior') == 'CONFIRM_WITHOUT_CHANGE':
-                policy_parts.append("  - If the configuration confirmation request includes the complete configuration and fully matches your requirements, reply: 'Yes, that configuration is correct.'")
+            if config_confirm.get('type') == 'CONFIRM_WITHOUT_CHANGE':
+                response = config_confirm.get('response', {})
+                if response.get('type') == 'EXACT_TEXT':
+                    policy_parts.append(f"  - When Support asks you to confirm the configuration and it matches your requirements, reply exactly: '{response['text']}'")
+                else:
+                    policy_parts.append("  - If the configuration confirmation request includes the complete configuration and fully matches your requirements, reply: 'Yes, that configuration is correct.'")
                 policy_parts.append("  - You must see the complete configuration list before confirming")
         
         final_confirm = self.policy.get('final_confirmation', {})
         if final_confirm:
             policy_parts.append("Final Order Confirmation Strategy:")
-            if final_confirm.get('behavior') == 'CONFIRM_WITHOUT_CHANGE':
-                policy_parts.append("  - If the final order confirmation request includes complete order details and everything is correct, reply: 'Yes, I confirm the final order and would like to place it.'")
+            behavior = final_confirm.get('type') or final_confirm.get('behavior')
+            if behavior == 'CONFIRM_WITHOUT_CHANGE':
+                response = final_confirm.get('response', {})
+                if response.get('type') == 'EXACT_TEXT':
+                    policy_parts.append(f"  - When Support asks you to confirm the final order and everything is correct, reply exactly: '{response['text']}'")
+                else:
+                    policy_parts.append("  - If the final order confirmation request includes complete order details and everything is correct, reply: 'Yes, I confirm the final order and would like to place it.'")
+            elif behavior == 'REJECT_AND_ABANDON':
+                customer_intent = final_confirm.get('customer_intent', 'ABANDON_PURCHASE')
+                response = final_confirm.get('response', {})
+                if response.get('type') == 'EXACT_TEXT':
+                    policy_parts.append(f"  - When Support asks you to confirm the final order, you have changed your mind and want to cancel. Reply exactly: '{response['text']}'")
+                else:
+                    policy_parts.append("  - When Support asks you to confirm the final order, you have changed your mind. Politely decline and state that you don't want to proceed with the order anymore. Make it clear you are cancelling the entire order, not requesting changes.")
         
         subsequent = self.policy.get('subsequent_disclosure', '')
         if subsequent == 'ANSWER_REQUESTED_INFORMATION':
