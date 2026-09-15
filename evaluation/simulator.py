@@ -99,7 +99,7 @@ class SimpleCustomerSimulator:
             policy_parts.append("Configuration Confirmation Strategy:")
             if config_confirm.get('type') == 'CONFIRM_WITHOUT_CHANGE':
                 response = config_confirm.get('response', {})
-                if response.get('type') == 'EXACT_TEXT':
+                if response and response.get('type') == 'EXACT_TEXT':
                     policy_parts.append(f"  - When Support asks you to confirm the configuration and it matches your requirements, reply exactly: '{response['text']}'")
                 else:
                     policy_parts.append("  - If the configuration confirmation request includes the complete configuration and fully matches your requirements, reply: 'Yes, that configuration is correct.'")
@@ -111,7 +111,7 @@ class SimpleCustomerSimulator:
             behavior = final_confirm.get('type') or final_confirm.get('behavior')
             if behavior == 'CONFIRM_WITHOUT_CHANGE':
                 response = final_confirm.get('response', {})
-                if response.get('type') == 'EXACT_TEXT':
+                if response and response.get('type') == 'EXACT_TEXT':
                     policy_parts.append(f"  - When Support asks you to confirm the final order and everything is correct, reply exactly: '{response['text']}'")
                 else:
                     policy_parts.append("  - If the final order confirmation request includes complete order details and everything is correct, reply: 'Yes, I confirm the final order and would like to place it.'")
