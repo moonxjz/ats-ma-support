@@ -73,6 +73,47 @@ A single customer message may also provide contact and delivery fields:
 VIC 3000, Australia' -> {"delivery_address":{"address":"1 Example Street",
 "city":"Melbourne","state":"VIC","postcode":"3000","country":"Australia"}};
 'My room is 5.2m x 4.0m' -> {"room_size":"5.2m x 4.0m"}.
+
+Full multi-field example:
+'I'd like to order one 8ft Saga pool table with a Live-Edge top rail profile and
+Standard rubber. For timber, I'd like Marri in Natural finish, with Red felt.'
+-> {"product_model":"Saga","table_size":"8ft","timber":"Marri","timber_painting":
+"Natural","felt_color":"Red","bracket":"Standard rubber","top_profile":"Live-Edge",
+"quantity":1}
+
+Authoritative catalog values (use these EXACT strings when the customer mentions them):
+
+product_model (Table Design Model):
+Odyssey, Odyssey Rise, Saga, Kings Cross, Sleek, Cyber, Double Moon, Wave,
+Victory, Regent, Regent Rise, Homestead, Southern Cross, Executive, Melody,
+Prism, Rustic
+
+table_size: 6ft, 7ft, 8ft, 9ft
+
+timber (Timber):
+Tassie Oak, American Oak, Messmate, Zebra, Blackwood, Myrtle, Marri,
+Camphor Laurel, Jarrah
+
+timber_painting (Timber Paint):
+Natural, Black, Nutmeg, Riverbed, Stone, Teak, Walnut, Wenge, White,
+Jarrah, Umber
+
+felt_color (Felt):
+Olive, Blue, Burgundy, Black, Red, Purple, Grey
+
+bracket (Bracket):
+Standard rubber, Stainless Steel, Brass, Black Powder, Black Chrome, Copper
+
+top_profile (Top Rail Profile):
+Bull-nose Edge - with black steel side skirt,
+Bull-nose Edge - with stainless steel side skirt,
+Bull-nose Edge - with matching timber side skirt,
+Ball Return, Ball Return with Timber Cladding, Waterfall, Live-Edge
+
+IMPORTANT:When the customer mentions any of these catalog values, map them to the
+corresponding output field using the EXACT title string shown above. Do not
+rewrite, abbreviate, or paraphrase catalog titles. Do not ignore them, This is extraction, not
+catalog lookup: only output a value when the current message clearly references it.
 """.strip()
 
 

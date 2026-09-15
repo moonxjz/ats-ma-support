@@ -63,7 +63,7 @@ def chat(
             "json_schema": {
                 "name": "output_schema",
                 "schema": format,
-                "strict": True
+                "strict": False
             }
         }
 

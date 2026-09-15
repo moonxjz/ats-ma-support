@@ -27,7 +27,7 @@ def main():
     args = parser.parse_args()
 
     log_level = getattr(logging, 'INFO')
-    log_file = Path('logs') / (args.log_file or Path('logs') / f'{args.scenario_id}.log')
+    log_file = Path('logs') / (args.log_file or f'{args.scenario_id}.log')
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(
