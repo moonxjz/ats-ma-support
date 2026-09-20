@@ -4,10 +4,8 @@ from entity.workflow_state import (
     current_utc_time,
 )
 from workflow.workflow_store import load_workflow, save_workflow
-from workflow.task_store import (
-    TaskRecord,
-    create_task_from_workflow,
-)
+from entity.task_record import TaskRecord
+from workflow.task_store import create_task_from_workflow
 
 class TaskAgentResult(BaseModel):
     status: str

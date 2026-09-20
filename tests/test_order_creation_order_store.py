@@ -9,13 +9,8 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from workflow.order.order_creation_order_store import (
-    DEFAULT_ORDER_STORE_PATH,
-    ORDER_STATUS_CONFIRMED,
-    OrderCreationRecord,
-    OrderStoreIntegrityError,
-    create_order,
-)
+from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH, ORDER_STATUS_CONFIRMED, OrderStoreIntegrityError, create_order
+from entity.order_record import OrderCreationRecord
 from tests.test_order_creation_confirmation import final_waiting_state
 
 
@@ -56,7 +51,7 @@ class OrderStoreTests(unittest.TestCase):
 
     def test_new_address_round_trip_and_legacy_payload_rejection(self):
         from entity.order_creation_state import DeliveryAddress, OrderCreationState, FinalDeliveryAddress
-        from workflow.order.order_creation_updates import ExtractedDeliveryAddress
+        from entity.extracted_order import ExtractedDeliveryAddress
         from agents.support_agent import render_required_input_request
         self.create()
         original = self.read_store()

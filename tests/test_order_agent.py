@@ -10,12 +10,12 @@ from unittest.mock import Mock, call, patch
 from pydantic import ValidationError
 
 from entity.business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
-from workflow.order.order_creation_confirmation import ConfirmationInterpretation
+from entity.confirmation import ConfirmationInterpretation
 from agents.order_agent import process_order_creation_message
 from workflow.order.order_creation_controller import execute_order_creation_workflow
-from workflow.order.order_creation_extraction import ConversationMessage
+from entity.conversation import ConversationMessage
 from entity.order_creation_state import OrderCreationStage, OrderCreationState, OrderWorkflowStatus
-from workflow.order.order_creation_updates import ExtractedOrderInformation
+from entity.extracted_order import ExtractedOrderInformation
 from tests.test_order_creation_state import complete_customer_state as schema_complete_state
 
 

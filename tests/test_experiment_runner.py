@@ -10,14 +10,17 @@ from unittest.mock import Mock, patch
 
 from pydantic import ValidationError
 from entity.business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
-from workflow.classifier import ClassifierResult, MessageCategory
+from entity.classification import ClassifierResult, MessageCategory
 from workflow.confirmation_presentation import render_configuration_summary, render_provisional_order
-from workflow.conversation_runtime import ConversationSession, PendingTurn, TurnFailure, TurnResult, TurnStatus
-from workflow.order.order_creation_extraction import ConversationMessage
-from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH, OrderCreationRecord
+from entity.conversation import ConversationSession, PendingTurn, TurnResult, TurnStatus
+from workflow.conversation_runtime import TurnFailure
+from entity.conversation import ConversationMessage
+from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH
+from entity.order_record import OrderCreationRecord
 from entity.order_creation_state import FinalOrderSnapshot, OrderCreationState, OrderCreationStage, OrderWorkflowStatus
-from agents.root_agent import RootExecutionResult, route_message
-from agents.support_agent import CustomerResponse, SupportAction, SupportActionResult, SupportOutcome
+from entity.routing import RootExecutionResult
+from agents.root_agent import route_message
+from entity.support import CustomerResponse, SupportAction, SupportActionResult, SupportOutcome
 from evaluation.customer_simulator import CustomerSimulatorInput, CustomerSimulatorState, step
 from evaluation.public_observation import PublicMessage
 from evaluation.static_product_knowledge import provide_support_knowledge

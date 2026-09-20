@@ -151,7 +151,15 @@ ats-ma-support/
 │   └── summary_agent.py        # basic project summary
 ├── entity/                     # domain entities and shared contracts
 │   ├── business_result.py      # shared BusinessResult contract
+│   ├── classification.py       # MessageCategory, ClassifierResult
+│   ├── confirmation.py         # ConfirmationIntent, ConfirmationInterpretation
+│   ├── conversation.py         # ConversationMessage, session and turn models
+│   ├── extracted_order.py      # ExtractedOrderInformation / address
 │   ├── order_creation_state.py # OrderCreationState, FinalOrderSnapshot
+│   ├── order_record.py         # OrderCreationRecord and its identifiers
+│   ├── routing.py              # routing and root execution results
+│   ├── support.py              # Support value objects, knowledge contracts
+│   ├── task_record.py          # TaskRecord
 │   └── workflow_state.py       # TaskCreationState
 ├── workflow/                   # workflow orchestration and runtime
 │   ├── classifier.py           # incoming message classification

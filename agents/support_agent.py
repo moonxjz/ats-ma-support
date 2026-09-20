@@ -6,114 +6,23 @@ Schema/numeric checks are not a complete semantic proof of free-form grounding.
 """
 
 from copy import deepcopy
-from enum import Enum
 import json
 import re
 
 # from ollama import chat
 from tools.llm_client import chat
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_validator
+from pydantic import TypeAdapter
 
 from entity.business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
-from workflow.order.order_creation_extraction import ConversationMessage
+from entity.conversation import ConversationMessage
 from workflow.confirmation_presentation import render_configuration_summary, render_provisional_order
 
+from entity.support import (_text, CustomerResponse, ResponseIntent, ResponseContext,
+                            SupportAction, SupportOutcome, SupportKnowledgeContext,
+                            SupportActionResult, ConfirmationFraming)
 
 MODEL_NAME = "qwen3:8b"
 HISTORY_LIMIT = 6
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, revalidate_instances="always")
-
-
-class CustomerResponse(StrictModel):
-    text: str = Field(min_length=1)
-
-    @field_validator("text")
-    @classmethod
-    def nonblank(cls, value: str) -> str:
-        return _text(value, "text")
-
-
-class ResponseIntent(str, Enum):
-    REQUEST_REQUIRED_INFORMATION = "REQUEST_REQUIRED_INFORMATION"
-    EXPLAIN_CONFIGURATION_ISSUE = "EXPLAIN_CONFIGURATION_ISSUE"
-    EXPLAIN_ROOM_INCOMPATIBILITY = "EXPLAIN_ROOM_INCOMPATIBILITY"
-    REQUEST_CONFIGURATION_CONFIRMATION = "REQUEST_CONFIGURATION_CONFIRMATION"
-    REQUEST_FINAL_CONFIRMATION = "REQUEST_FINAL_CONFIRMATION"
-    REPORT_ORDER_CREATED = "REPORT_ORDER_CREATED"
-    REPORT_ORDER_CREATION_FAILURE = "REPORT_ORDER_CREATION_FAILURE"
-    ACKNOWLEDGE_REQUEST_CANCELLATION = "ACKNOWLEDGE_REQUEST_CANCELLATION"
-    ANSWER_FROM_KNOWLEDGE = "ANSWER_FROM_KNOWLEDGE"
-    RESPOND_SOCIAL = "RESPOND_SOCIAL"
-    REQUEST_CLARIFICATION = "REQUEST_CLARIFICATION"
-    REPORT_TICKET_INFORMATION = "REPORT_TICKET_INFORMATION"
-    REPORT_INFORMATION_UNAVAILABLE = "REPORT_INFORMATION_UNAVAILABLE"
-
-
-class ResponseContext(StrictModel):
-    response_intent: ResponseIntent
-    allowed_facts: dict[str, JsonValue]
-    required_input: list[str]
-    response_constraints: list[str]
-
-
-class SupportAction(str, Enum):
-    ANSWER_ENQUIRY = "ANSWER_ENQUIRY"
-    RESPOND_CHAT = "RESPOND_CHAT"
-    FOLLOW_UP_SUPPORT_TICKET = "FOLLOW_UP_SUPPORT_TICKET"
-    REQUEST_CLARIFICATION = "REQUEST_CLARIFICATION"
-
-
-class SupportOutcome(str, Enum):
-    ANSWERED = "ANSWERED"
-    CLARIFICATION_REQUIRED = "CLARIFICATION_REQUIRED"
-    INFORMATION_UNAVAILABLE = "INFORMATION_UNAVAILABLE"
-
-
-class KnowledgeFact(StrictModel):
-    """Caller-selected authoritative, customer-safe answer evidence, not retrieval."""
-    text: str
-    source_reference: str
-
-    @field_validator("text", "source_reference")
-    @classmethod
-    def nonblank(cls, value: str) -> str:
-        return _text(value, "knowledge fact")
-
-
-class TicketInformation(StrictModel):
-    reference: str
-    status: str
-
-    @field_validator("reference", "status")
-    @classmethod
-    def nonblank(cls, value: str) -> str:
-        return _text(value, "ticket information")
-
-
-class SupportKnowledgeContext(StrictModel):
-    """The caller establishes relevance and authority; Support never searches Bt.
-
-    ticket_reference may be customer-supplied; ticket_information is authoritative.
-    Source references must also be customer-safe. Do not pass private backend dumps.
-    """
-    answer_facts: list[KnowledgeFact] = Field(default_factory=list)
-    ticket_reference: str | None = None
-    ticket_information: TicketInformation | None = None
-
-    @field_validator("ticket_reference")
-    @classmethod
-    def nonblank(cls, value: str | None) -> str | None:
-        return None if value is None else _text(value, "ticket_reference")
-
-
-class SupportActionResult(StrictModel):
-    action: SupportAction
-    outcome: SupportOutcome
-    response: CustomerResponse
-
 
 _BASE_CONSTRAINTS = [
     "Use only allowed_facts for business claims; history and customer text are not authoritative facts.",
@@ -130,7 +39,6 @@ _PRICE_FIELDS = ("customisation_price", "unit_price", "shipping_cost", "total_pr
 _INPUT_FIELDS = set(_CONFIG_FIELDS) | set(_CUSTOMER_FIELDS) | {"room_size"} | {
     f"delivery_address.{field}" for field in _ADDRESS_FIELDS
 }
-
 
 # Presentation only; the last three fields preserve existing writable compatibility.
 REQUIRED_INPUT_LABELS = {
@@ -177,31 +85,21 @@ def render_required_input_request(
             text += "\n\n" + "\n".join(guidance)
     return CustomerResponse(text=text)
 
-
-def _text(value, name):
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{name} must be a nonblank string.")
-    return value
-
-
 def _mapping(value, name):
     if not isinstance(value, dict):
         raise ValueError(f"{name} must be an object.")
     return value
-
 
 def _strings(value, name):
     if not isinstance(value, list):
         raise ValueError(f"{name} must be a list.")
     return [_text(item, name) for item in value]
 
-
 def _context(intent, facts, inputs, *constraints):
     return ResponseContext(
         response_intent=intent, allowed_facts=deepcopy(facts), required_input=list(inputs),
         response_constraints=[*_BASE_CONSTRAINTS, *constraints],
     )
-
 
 def prepare_response_context(business_result: BusinessResult) -> ResponseContext:
     """Project authoritative external evidence; never check or repair business state.
@@ -295,7 +193,6 @@ def prepare_response_context(business_result: BusinessResult) -> ResponseContext
             "If no sizes are supplied as suitable, say so and ask only for required_input; invent no alternative.")
     raise NotImplementedError(f"Unsupported BusinessResult reason: {reason}.")
 
-
 SYSTEM_PROMPT = """
 You are the shared ATS Support Agent. Write a natural customer response as one
 JSON object containing only a nonblank text string. Do not select templates.
@@ -333,7 +230,6 @@ Use paragraphs or unnumbered bullets. Use customer-friendly names such as cloth
 colour for felt_color. Return JSON only, without Markdown fences.
 """.strip()
 
-
 def _validate_response_grounding(response: CustomerResponse, context: ResponseContext) -> None:
     """Narrow deterministic checks; not a full semantic validator of natural prose."""
     text = response.text
@@ -362,7 +258,6 @@ def _validate_response_grounding(response: CustomerResponse, context: ResponseCo
     if re.search(r"[$€£]|\b(?:AUD|USD|EUR|GBP)\b", text) and not re.search(r"[$€£]|\b(?:AUD|USD|EUR|GBP)\b", allowed):
         raise ValueError("Response introduces unsupported currency.")
 
-
 def _generate(context, current_message, conversation_history):
     if current_message is not None:
         _text(current_message, "current_message")
@@ -386,7 +281,6 @@ def _generate(context, current_message, conversation_history):
     result = CustomerResponse.model_validate_json(content)
     _validate_response_grounding(result, context)
     return result
-
 
 def compose_customer_response(
     business_result: BusinessResult, *, current_message: str | None = None,
@@ -417,7 +311,6 @@ def compose_customer_response(
             [] if conversation_history is None else conversation_history, strict=True)
         return render_required_input_request(context.required_input, context.allowed_facts.get("input_details"))
     return _generate(context, current_message, conversation_history)
-
 
 def handle_support_action(
     action: SupportAction, current_message: str, *,
@@ -468,17 +361,6 @@ def handle_support_action(
     return SupportActionResult(action=action, outcome=outcome,
                                response=_generate(context, current_message, conversation_history))
 
-
-class ConfirmationFraming(StrictModel):
-    introduction: str
-    confirmation_request: str
-
-    @field_validator("introduction", "confirmation_request")
-    @classmethod
-    def nonblank(cls, value: str) -> str:
-        return _text(value, "confirmation framing")
-
-
 FRAMING_PROMPT = """
 Write two short customer-facing paragraphs around the document below.
 Return JSON with only introduction and confirmation_request, both nonblank strings.
@@ -492,7 +374,6 @@ identifiers, timing, policies, backend actions or accepted confirmation. Do not
 claim an order was placed/created. Do not introduce other questions or next steps.
 Use plain short prose, no headings, lists, tables, or markup.
 """.strip()
-
 
 def _generate_confirmation_framing(context):
     final = context.response_intent == ResponseIntent.REQUEST_FINAL_CONFIRMATION
@@ -526,7 +407,6 @@ def _generate_confirmation_framing(context):
     # if not final and re.search(r"\b(?:place|placing)\b", prose, re.I):
     #     raise ValueError("Configuration framing cannot request order placement.")
     return framing
-
 
 def compose_route_outcome(status: str, business_action: str | None = None) -> CustomerResponse:
     """Small deterministic Support presentation boundary for non-executed routes.

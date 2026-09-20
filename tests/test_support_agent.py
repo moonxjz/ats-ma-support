@@ -12,13 +12,9 @@ from unittest.mock import patch
 from pydantic import ValidationError
 
 from entity.business_result import BusinessResult, BusinessResultReason as Reason, BusinessResultStatus as Status
-from workflow.order.order_creation_extraction import ConversationMessage
-from agents.support_agent import (
-    CustomerResponse, KnowledgeFact, ResponseContext, ResponseIntent, SupportAction,
-    SupportKnowledgeContext, SupportOutcome, TicketInformation,
-    compose_customer_response, handle_support_action, prepare_response_context,
-    ConfirmationFraming,
-)
+from entity.conversation import ConversationMessage
+from entity.support import CustomerResponse, KnowledgeFact, ResponseContext, ResponseIntent, SupportAction, SupportKnowledgeContext, SupportOutcome, TicketInformation, ConfirmationFraming
+from agents.support_agent import compose_customer_response, handle_support_action, prepare_response_context
 
 
 CONFIG = dict(product_model="Odyssey", table_size="8ft", timber="Tassie Oak",

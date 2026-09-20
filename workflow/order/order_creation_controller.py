@@ -2,19 +2,20 @@
 
 from pathlib import Path
 
-from workflow.order.order_creation_confirmation import ConfirmationIntent, ConfirmationInterpretation
+from entity.confirmation import ConfirmationIntent, ConfirmationInterpretation
 from workflow.order.order_creation_catalog import (
     CUSTOMIZATION_CATEGORIES, lookup_base_product, lookup_product_option, lookup_product_pricing,
 )
 
 from entity.business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
-from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH, ORDER_ID_PATTERN, ORDER_STATUS_CONFIRMED
+from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH, ORDER_STATUS_CONFIRMED
+from entity.order_record import ORDER_ID_PATTERN
 from workflow.order.order_creation_order_store import create_order
 from workflow.order.order_creation_rules import build_configuration_snapshot, validate_room_size, calculate_total_price
 from workflow.order.order_creation_rules import PRODUCT_AUTHORIZATION_FIELDS, confirmed_product_configuration_matches
 from workflow.order.order_creation_rules import build_final_order_snapshot, final_order_snapshot_matches
 from workflow.order.order_creation_shipping import lookup_shipping_rate
-from workflow.order.order_creation_updates import ExtractedOrderInformation
+from entity.extracted_order import ExtractedOrderInformation
 from entity.order_creation_state import (
     OrderCreationStage,
     OrderCreationState,

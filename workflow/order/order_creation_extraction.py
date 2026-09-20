@@ -1,15 +1,15 @@
 """Extract current-turn customer updates; no merge or workflow execution."""
 
 import json
-from typing import Literal
 
 # from ollama import chat
 from tools.llm_client import chat
-from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
+from pydantic import TypeAdapter
 
 from entity.order_creation_state import OrderCreationState
-from workflow.order.order_creation_updates import ExtractedDeliveryAddress, ExtractedOrderInformation
+from entity.extracted_order import ExtractedDeliveryAddress, ExtractedOrderInformation
 
+from entity.conversation import ConversationMessage
 
 MODEL_NAME = "qwen3:8b"
 SYSTEM_PROMPT = """
@@ -115,23 +115,6 @@ corresponding output field using the EXACT title string shown above. Do not
 rewrite, abbreviate, or paraphrase catalog titles. Do not ignore them, This is extraction, not
 catalog lookup: only output a value when the current message clearly references it.
 """.strip()
-
-
-class ConversationMessage(BaseModel):
-    """One prior customer/Support message; callers may also supply dictionaries."""
-
-    model_config = ConfigDict(extra="forbid", strict=True, revalidate_instances="always")
-
-    role: Literal["user", "assistant"]
-    content: str
-
-    @field_validator("content")
-    @classmethod
-    def reject_blank_content(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("History message content must not be blank.")
-        return value
-
 
 def extract_order_information(
     current_message: str,

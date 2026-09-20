@@ -559,7 +559,8 @@ class ConfirmationAndReentryTests(unittest.TestCase):
                 self.assertEqual(state.model_dump(), before)
 
     def test_effective_changes_invalidate_only_approved_fields(self):
-        from workflow.order.order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+        from entity.extracted_order import ExtractedOrderInformation
+        from workflow.order.order_creation_updates import apply_extracted_order_information
         updates = [{"felt_color": "Green"}, {"table_size": "9ft"}, {"room_size": "6m x 5m"},
                    {"phone": "0400123456"}, {"delivery_address": {"city": "Richmond"}},
                    {"company_name": None}, {"customer_instructions": None},
@@ -593,7 +594,8 @@ class ConfirmationAndReentryTests(unittest.TestCase):
                 self.assertEqual(previous.model_dump(), before)
 
     def test_no_change_and_outside_scope_are_noops(self):
-        from workflow.order.order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+        from entity.extracted_order import ExtractedOrderInformation
+        from workflow.order.order_creation_updates import apply_extracted_order_information
         previous = self.waiting_state()
         for values in ({}, {"table_size": "8ft"}, {"delivery_address": {}}, {"company_name": None}):
             updated = apply_extracted_order_information(previous, ExtractedOrderInformation(**values))
@@ -615,7 +617,8 @@ class ConfirmationAndReentryTests(unittest.TestCase):
                 self.assertEqual(updated.model_dump(), before)
 
     def test_reentry_routes_through_actual_handlers(self):
-        from workflow.order.order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+        from entity.extracted_order import ExtractedOrderInformation
+        from workflow.order.order_creation_updates import apply_extracted_order_information
         cases = [({"felt_color": "Green"}, "UNSUPPORTED_CONFIGURATION_VALUE", False),
                  ({"table_size": "9ft"}, "ROOM_SIZE_UNSUITABLE", False),
                  ({"room_size": "6m x 5m"}, "CONFIGURATION_CONFIRMATION_REQUIRED", True),
@@ -771,7 +774,8 @@ class FinalReentryTests(unittest.TestCase):
         return state
 
     def merge_and_route(self, previous, values):
-        from workflow.order.order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+        from entity.extracted_order import ExtractedOrderInformation
+        from workflow.order.order_creation_updates import apply_extracted_order_information
         before = previous.model_dump()
         updated = apply_extracted_order_information(previous, ExtractedOrderInformation(**values))
         with patch("workflow.order.order_creation_controller.current_utc_time", return_value="fixed"):
@@ -877,7 +881,7 @@ class FinalReentryTests(unittest.TestCase):
 
 class ConfirmationAcceptanceTests(unittest.TestCase):
     def setUp(self):
-        from workflow.order.order_creation_confirmation import ConfirmationInterpretation
+        from entity.confirmation import ConfirmationInterpretation
         self.confirmed = ConfirmationInterpretation(intent="CONFIRMED")
         self.state = complete_customer_state()
         execute_order_creation_workflow(self.state)
@@ -932,7 +936,7 @@ class ConfirmationAcceptanceTests(unittest.TestCase):
             self.assertEqual(self.state.model_dump(), before)
 
     def test_waiting_interpretations_preserve_snapshot_and_add_context(self):
-        from workflow.order.order_creation_confirmation import ConfirmationInterpretation
+        from entity.confirmation import ConfirmationInterpretation
         for intent in ("DECLINED", "AMBIGUOUS", "CHANGE_REQUESTED"):
             with self.subTest(intent=intent):
                 state = self.state.model_copy(deep=True)
@@ -990,7 +994,7 @@ class FinalConfirmationTests(unittest.TestCase):
             totals.assert_not_called()
 
     def test_matched_and_free_shipping_authorize_exact_order(self):
-        from workflow.order.order_creation_confirmation import ConfirmationInterpretation
+        from entity.confirmation import ConfirmationInterpretation
         for postcode, cost in (("3000", Decimal("1060")), ("3152", Decimal("0"))):
             with TemporaryDirectory() as tmp:
                 store_path = Path(tmp) / "orders.json"
@@ -1112,7 +1116,7 @@ class FinalConfirmationTests(unittest.TestCase):
             self.assertEqual(replay.final_order_snapshot, snapshot)
 
     def test_declined_ambiguous_and_change_request_stay_waiting(self):
-        from workflow.order.order_creation_confirmation import ConfirmationInterpretation
+        from entity.confirmation import ConfirmationInterpretation
         for intent in ("DECLINED", "AMBIGUOUS", "CHANGE_REQUESTED"):
             state = self.waiting()
             before = state.model_dump()
@@ -1125,7 +1129,7 @@ class FinalConfirmationTests(unittest.TestCase):
             self.assertEqual(state.model_dump(), before)
 
     def test_stale_and_invalid_evidence_raise_before_mutation(self):
-        from workflow.order.order_creation_confirmation import ConfirmationInterpretation
+        from entity.confirmation import ConfirmationInterpretation
         for field, value in (("phone", "123"), ("quantity", 3), ("shipping_cost", Decimal("0")),
                              ("final_order_snapshot", None), ("final_order_snapshot", {}),
                              ("configuration_confirmed", False), ("pending_confirmations", []),
@@ -1141,7 +1145,7 @@ class FinalConfirmationTests(unittest.TestCase):
             self.assertEqual(state, before)
 
     def test_bad_arguments_and_clock_failure(self):
-        from workflow.order.order_creation_confirmation import ConfirmationInterpretation
+        from entity.confirmation import ConfirmationInterpretation
         from workflow.order.order_creation_controller import handle_final_confirmation
         state = self.waiting()
         intent = ConfirmationInterpretation(intent="CONFIRMED")

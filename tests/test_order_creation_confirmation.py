@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from pydantic import ValidationError
-from workflow.order.order_creation_confirmation import ConfirmationInterpretation, interpret_confirmation_response
+from entity.confirmation import ConfirmationInterpretation
+from workflow.order.order_creation_confirmation import interpret_confirmation_response
 from workflow.order.order_creation_controller import execute_order_creation_workflow
 from tests.test_order_creation_state import complete_customer_state
 

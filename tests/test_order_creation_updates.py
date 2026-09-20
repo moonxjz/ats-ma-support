@@ -7,11 +7,8 @@ from unittest.mock import patch
 from pydantic import ValidationError
 
 from entity.order_creation_state import OrderCreationState
-from workflow.order.order_creation_updates import (
-    ExtractedDeliveryAddress,
-    ExtractedOrderInformation,
-    apply_extracted_order_information,
-)
+from entity.extracted_order import ExtractedDeliveryAddress, ExtractedOrderInformation
+from workflow.order.order_creation_updates import apply_extracted_order_information
 from tests.test_order_creation_state import complete_customer_state
 
 

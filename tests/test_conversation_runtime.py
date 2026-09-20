@@ -11,15 +11,16 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from workflow.classifier import ClassifierResult, MessageCategory
-from workflow.conversation_runtime import (ConversationSession, PendingTurn, TurnFailure, TurnStatus,
-                                  process_customer_message, retry_pending_response)
+from entity.classification import ClassifierResult, MessageCategory
+from entity.conversation import ConversationSession, PendingTurn, TurnStatus
+from workflow.conversation_runtime import TurnFailure, process_customer_message, retry_pending_response
 from agents.order_agent import process_order_creation_message
-from workflow.order.order_creation_confirmation import ConfirmationInterpretation
-from workflow.order.order_creation_updates import ExtractedOrderInformation
-from agents.root_agent import route_message, execute_route, RoutingStatus
-from agents.support_agent import (CustomerResponse, SupportAction, SupportKnowledgeContext, KnowledgeFact,
-                           TicketInformation, compose_customer_response, compose_route_outcome)
+from entity.confirmation import ConfirmationInterpretation
+from entity.extracted_order import ExtractedOrderInformation
+from agents.root_agent import route_message, execute_route
+from entity.routing import RoutingStatus
+from entity.support import CustomerResponse, SupportAction, SupportKnowledgeContext, KnowledgeFact, TicketInformation
+from agents.support_agent import compose_customer_response, compose_route_outcome
 from workflow.confirmation_presentation import render_configuration_summary, render_provisional_order
 from tests.test_order_creation_controller import complete_customer_state
 

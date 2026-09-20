@@ -8,75 +8,29 @@ multi-process writes.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-import re
 from tempfile import NamedTemporaryFile
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict
 
 from entity.order_creation_state import FinalOrderSnapshot
 from entity.workflow_state import current_utc_time
 
+from entity.order_record import ORDER_ID_PATTERN, OrderCreationRecord
 
 DEFAULT_ORDER_STORE_PATH = Path(__file__).resolve().parents[2] / "data" / "orders.json"
-ORDER_ID_PATTERN = re.compile(r"^ORD-(\d{6})$")
 ORDER_STATUS_CONFIRMED = "CONFIRMED"
-
 
 class OrderStoreIntegrityError(RuntimeError):
     """Raised when persisted order data violates the MVP store contract."""
-
-
-def _validate_utc_timestamp(value: str) -> str:
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError as exc:
-        raise ValueError("created_at must be a valid ISO-8601 timestamp.") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
-        raise ValueError("created_at must be timezone-aware UTC.")
-    return value
-
-
-class OrderCreationRecord(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True, revalidate_instances="always")
-
-    order_id: str
-    source_workflow_id: str
-    conversation_id: str
-    created_at: str
-    order_status: Literal["CONFIRMED"]
-    order: FinalOrderSnapshot
-
-    @field_validator("order_id")
-    @classmethod
-    def validate_order_id(cls, value: str) -> str:
-        if ORDER_ID_PATTERN.fullmatch(value) is None:
-            raise ValueError("order_id must match ORD-000001 format.")
-        return value
-
-    @field_validator("source_workflow_id", "conversation_id")
-    @classmethod
-    def reject_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("Store identifiers must not be blank.")
-        return value
-
-    @field_validator("created_at")
-    @classmethod
-    def validate_created_at(cls, value: str) -> str:
-        return _validate_utc_timestamp(value)
-
 
 class OrderCommitResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True, revalidate_instances="always")
 
     record: OrderCreationRecord
     created: bool
-
 
 def _load_store(store_path: Path) -> list[OrderCreationRecord]:
     if not store_path.exists():
@@ -106,7 +60,6 @@ def _load_store(store_path: Path) -> list[OrderCreationRecord]:
         raise OrderStoreIntegrityError("Order store contains duplicate order_id values.")
     return records
 
-
 def _next_order_id(records: list[OrderCreationRecord]) -> str:
     highest = 0
     for record in records:
@@ -116,11 +69,9 @@ def _next_order_id(records: list[OrderCreationRecord]) -> str:
         highest = max(highest, int(match.group(1)))
     return f"ORD-{highest + 1:06d}"
 
-
 def _serialize_records(records: list[OrderCreationRecord]) -> str:
     payload = [json.loads(record.model_dump_json()) for record in records]
     return json.dumps(payload, indent=2) + "\n"
-
 
 def _atomic_write_store(store_path: Path, records: list[OrderCreationRecord]) -> None:
     store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,7 +91,6 @@ def _atomic_write_store(store_path: Path, records: list[OrderCreationRecord]) ->
                 os.unlink(temp_name)
             except OSError:
                 pass
-
 
 def create_order(
     *,

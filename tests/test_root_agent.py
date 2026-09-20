@@ -10,11 +10,11 @@ from pydantic import ValidationError
 
 from agents import root_agent
 from entity.business_result import BusinessResult, BusinessResultReason, BusinessResultStatus
-from workflow.classifier import ClassifierResult, MessageCategory
-from workflow.order.order_creation_extraction import ConversationMessage
+from entity.classification import ClassifierResult, MessageCategory
+from entity.conversation import ConversationMessage
 from entity.order_creation_state import OrderCreationStage, OrderCreationState, OrderWorkflowStatus
-from agents.root_agent import (BusinessAction, RoutingReason, RoutingResult, RoutingStatus,
-                        TargetAgent, execute_route, route_message)
+from entity.routing import BusinessAction, RoutingReason, RoutingResult, RoutingStatus, TargetAgent
+from agents.root_agent import execute_route, route_message
 
 
 def classification(category=MessageCategory.CREATE_ORDER, confidence=0.9):
@@ -279,7 +279,7 @@ class RootExecutionTests(unittest.TestCase):
                 self.execute(route_message(classification(), self.state), self.state)
 
     def test_support_dispatch_has_separate_outcome_and_preserves_workflow(self):
-        from agents.support_agent import CustomerResponse, SupportAction, SupportActionResult, SupportOutcome
+        from entity.support import CustomerResponse, SupportAction, SupportActionResult, SupportOutcome
         support_result = SupportActionResult(action=SupportAction.RESPOND_CHAT,
             outcome=SupportOutcome.ANSWERED, response=CustomerResponse(text="Hello!"))
         support = Mock(return_value=support_result)
@@ -296,7 +296,7 @@ class RootExecutionTests(unittest.TestCase):
         self.processor.assert_not_called()
 
     def test_support_dispatch_rejects_wrong_action_result(self):
-        from agents.support_agent import CustomerResponse, SupportAction, SupportActionResult, SupportOutcome
+        from entity.support import CustomerResponse, SupportAction, SupportActionResult, SupportOutcome
         wrong = SupportActionResult(action=SupportAction.ANSWER_ENQUIRY,
             outcome=SupportOutcome.ANSWERED, response=CustomerResponse(text="Hello!"))
         route = route_message(classification(MessageCategory.CASUAL_CHAT), self.state)

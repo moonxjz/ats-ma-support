@@ -7,71 +7,15 @@ concurrent-session persistence is provided by this MVP.
 """
 
 from copy import deepcopy
-from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
-
-from workflow.classifier import ClassifierResult, classify_message
+from workflow.classifier import classify_message
 from agents.order_agent import process_order_creation_message
-from workflow.order.order_creation_extraction import ConversationMessage
-from entity.order_creation_state import OrderCreationState
-from agents.root_agent import RootExecutionResult, RoutingStatus, execute_route, route_message
-from agents.support_agent import (CustomerResponse, SupportKnowledgeContext, compose_customer_response,
-                           compose_route_outcome, handle_support_action)
-
-
-class RuntimeModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, revalidate_instances="always")
-
-
-class ConversationSession(RuntimeModel):
-    conversation_id: str
-    history: list[ConversationMessage] = Field(default_factory=list)
-    workflow_state: OrderCreationState | None = None
-
-    @property
-    def support_ticket_id(self) -> str:
-        return self.conversation_id
-
-    @field_validator("conversation_id")
-    @classmethod
-    def valid_id(cls, value):
-        if not value.strip():
-            raise ValueError("conversation_id must be nonblank.")
-        return value
-
-    @model_validator(mode="after")
-    def matching_workflow(self):
-        if self.workflow_state is not None and self.workflow_state.conversation_id != self.conversation_id:
-            raise ValueError("Session and workflow conversation IDs must match.")
-        return self
-
-
-class TurnStatus(str, Enum):
-    RESPONDED = "RESPONDED"
-    UNAVAILABLE = "UNAVAILABLE"
-    UNRESOLVED = "UNRESOLVED"
-
-
-class TurnResult(RuntimeModel):
-    session: ConversationSession
-    customer_response: CustomerResponse
-    classification: ClassifierResult
-    execution: RootExecutionResult
-    status: TurnStatus
-
-
-class PendingTurn(RuntimeModel):
-    """In-memory response retry record. Caller must retain it after composition failure.
-
-    A consumed record cannot be retried twice. Caller must not submit new turns
-    against the base session while holding an unresolved pending record.
-    """
-    base_session: ConversationSession
-    current_message: str
-    classification: ClassifierResult
-    execution: RootExecutionResult
-    _consumed: bool = PrivateAttr(default=False)
+from entity.conversation import (ConversationMessage, ConversationSession, PendingTurn,
+                                 TurnResult, TurnStatus)
+from entity.routing import RoutingStatus
+from agents.root_agent import execute_route, route_message
+from entity.support import CustomerResponse, SupportKnowledgeContext
+from agents.support_agent import compose_customer_response, compose_route_outcome, handle_support_action
 
 
 class TurnFailure(RuntimeError):
@@ -81,12 +25,10 @@ class TurnFailure(RuntimeError):
         self.phase = phase
         self.pending_turn = pending_turn
 
-
 def _validate_session(session):
     if not isinstance(session, ConversationSession):
         raise TypeError("session must be a ConversationSession.")
     return deepcopy(ConversationSession.model_validate(session))
-
 
 def _finish(base, message, classification, execution, response):
     if not isinstance(response, CustomerResponse):
@@ -101,7 +43,6 @@ def _finish(base, message, classification, execution, response):
               else TurnStatus.RESPONDED)
     return TurnResult(session=session, customer_response=response, classification=deepcopy(classification),
                       execution=deepcopy(execution), status=status)
-
 
 def process_customer_message(
     session: ConversationSession,
@@ -148,7 +89,6 @@ def process_customer_message(
         return _finish(base, current_message, classification, execution, response)
     except Exception as exc:
         raise TurnFailure("customer response") from exc
-
 
 def retry_pending_response(
     session: ConversationSession,

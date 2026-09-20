@@ -9,9 +9,10 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from workflow.order.order_creation_extraction import ConversationMessage, extract_order_information
+from entity.conversation import ConversationMessage
+from workflow.order.order_creation_extraction import extract_order_information
 from entity.order_creation_state import OrderCreationState
-from workflow.order.order_creation_updates import ExtractedOrderInformation
+from entity.extracted_order import ExtractedOrderInformation
 
 
 class OrderInformationExtractionTests(unittest.TestCase):

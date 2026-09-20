@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import patch
 
 from workflow.confirmation_presentation import render_configuration_summary, render_provisional_order
-from agents.support_agent import compose_customer_response, ConfirmationFraming
+from agents.support_agent import compose_customer_response
+from entity.support import ConfirmationFraming
 from tests.test_support_agent import CONFIG, FINAL, Reason, result_for
 
 

@@ -9,8 +9,9 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from workflow.classifier import ClassifierResult, MessageCategory, classify_message
-from workflow.order.order_creation_extraction import ConversationMessage
+from entity.classification import ClassifierResult, MessageCategory
+from workflow.classifier import classify_message
+from entity.conversation import ConversationMessage
 from entity.order_creation_state import OrderCreationState, OrderCreationStage, OrderWorkflowStatus
 
 

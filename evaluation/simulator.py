@@ -4,7 +4,7 @@ from pathlib import Path
 # from ollama import chat
 from tools.llm_client import chat
 from agents.order_agent import OrderCreationState
-from workflow.order.order_creation_extraction import ConversationMessage
+from entity.conversation import ConversationMessage
 
 MODEL_NAME = "qwen3:4b"
 HISTORY_LIMIT = 5

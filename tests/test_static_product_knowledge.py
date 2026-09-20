@@ -12,13 +12,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 from pydantic import ValidationError
-from workflow.classifier import ClassifierResult, MessageCategory
-from workflow.conversation_runtime import ConversationSession, TurnFailure, process_customer_message
+from entity.classification import ClassifierResult, MessageCategory
+from entity.conversation import ConversationSession
+from workflow.conversation_runtime import TurnFailure, process_customer_message
 from entity.order_creation_state import OrderCreationState
-from agents.support_agent import (
-    CustomerResponse, KnowledgeFact, MODEL_NAME, SYSTEM_PROMPT, SupportAction,
-    SupportKnowledgeContext, SupportOutcome, handle_support_action,
-)
+from entity.support import CustomerResponse, KnowledgeFact, SupportAction, SupportKnowledgeContext, SupportOutcome
+from agents.support_agent import MODEL_NAME, SYSTEM_PROMPT, handle_support_action
 from evaluation.scenario_loader import load_scenarios
 from evaluation.public_observation import PublicMessage, observe_public_response
 from evaluation.static_product_knowledge import (

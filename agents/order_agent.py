@@ -3,13 +3,16 @@
 from copy import deepcopy
 from pathlib import Path
 
-from workflow.order.order_creation_confirmation import ConfirmationIntent, interpret_confirmation_response
+from entity.confirmation import ConfirmationIntent
+from workflow.order.order_creation_confirmation import interpret_confirmation_response
 from entity.business_result import BusinessResult
 from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH
 from workflow.order.order_creation_controller import apply_order_creation_reentry, execute_order_creation_workflow
-from workflow.order.order_creation_extraction import ConversationMessage, extract_order_information
+from entity.conversation import ConversationMessage
+from workflow.order.order_creation_extraction import extract_order_information
 from entity.order_creation_state import OrderCreationStage, OrderCreationState, OrderWorkflowStatus
-from workflow.order.order_creation_updates import ExtractedOrderInformation, apply_extracted_order_information
+from entity.extracted_order import ExtractedOrderInformation
+from workflow.order.order_creation_updates import apply_extracted_order_information
 
 
 def _execute_with_optional_store_path(updated_state: OrderCreationState, **kwargs) -> BusinessResult:
