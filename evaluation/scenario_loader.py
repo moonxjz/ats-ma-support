@@ -47,9 +47,9 @@ def validate_repository(scenario: ScenarioSpec) -> None:
             raise FixtureDiscrepancy(f"{scenario.scenario_id}: unavailable fixture {reference.path}: {exc}") from exc
         compare(f"{reference.path} sha256", reference.sha256, actual_hash)
 
-    from order_creation_catalog import lookup_product_pricing
-    from order_creation_shipping import lookup_shipping_rate
-    from order_creation_rules import validate_room_size, calculate_total_price
+    from workflow.order.order_creation_catalog import lookup_product_pricing
+    from workflow.order.order_creation_shipping import lookup_shipping_rate
+    from workflow.order.order_creation_rules import validate_room_size, calculate_total_price
 
     truth = scenario.customer.ground_truth
     configuration = truth.configuration

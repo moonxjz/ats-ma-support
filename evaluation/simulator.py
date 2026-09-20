@@ -2,9 +2,9 @@
 import json
 from pathlib import Path
 # from ollama import chat
-from llm_client import chat
-from order_agent import OrderCreationState
-from order_creation_extraction import ConversationMessage
+from tools.llm_client import chat
+from agents.order_agent import OrderCreationState
+from workflow.order.order_creation_extraction import ConversationMessage
 
 MODEL_NAME = "qwen3:4b"
 HISTORY_LIMIT = 5

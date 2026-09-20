@@ -12,8 +12,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from order_creation_catalog import CATALOG_PATH, DEMO_TABLE_SIZES
-from support_agent import KnowledgeFact, SupportKnowledgeContext
+from workflow.order.order_creation_catalog import CATALOG_PATH, DEMO_TABLE_SIZES
+from agents.support_agent import KnowledgeFact, SupportKnowledgeContext
 from evaluation.public_observation import PublicMessage
 
 OptionField = Literal['product_model', 'table_size', 'timber', 'timber_painting',

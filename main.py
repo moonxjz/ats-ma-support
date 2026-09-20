@@ -6,9 +6,9 @@ from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
-from conversation_runtime import ConversationSession, TurnFailure, process_customer_message, retry_pending_response
-from order_agent import process_order_creation_message
-from order_creation_order_store import DEFAULT_ORDER_STORE_PATH
+from workflow.conversation_runtime import ConversationSession, TurnFailure, process_customer_message, retry_pending_response
+from agents.order_agent import process_order_creation_message
+from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH
 from evaluation.simulator import create_simple_simulator
 from tools.knowledge_tool import load_product_prices_as_knowledge
 

@@ -74,7 +74,7 @@ Generation and explicit safe validation:
 
 ```sh
 python -m evaluation.scenario_extractor_v2
-python -m unittest test_scenario_extractor_v2 test_scenario_spec_v2 test_scenario_spec -v
+python -m unittest tests.test_scenario_extractor_v2 tests.test_scenario_spec_v2 tests.test_scenario_spec -v
 ```
 
 Tests independently assert workbook-authored critical values, every price bundle,
@@ -166,7 +166,7 @@ conversation and EMPTY_ISOLATED order store outside that projection.
 Synthetic contract checks (not source projections):
 
 ```sh
-python -m unittest test_scenario_spec_v2 -v
+python -m unittest tests.test_scenario_spec_v2 -v
 ```
 
 Run only explicitly selected deterministic modules; unrestricted discovery can
@@ -293,7 +293,7 @@ or change business rules. Changing scenario semantics requires human approval.
 Run deterministic checks with the repository's pinned dependencies installed:
 
 ```sh
-python -m unittest test_scenario_spec test_order_creation_catalog test_order_creation_shipping test_order_creation_rules -v
+python -m unittest tests.test_scenario_spec tests.test_order_creation_catalog tests.test_order_creation_shipping tests.test_order_creation_rules -v
 ```
 
 CS1-B, simulator behavior, conversation execution and architecture integration are
@@ -520,7 +520,7 @@ in the simulator API. Parser limitations and development safeguards apply equall
 Run CS1-B and CS1-A deterministic tests:
 
 ```sh
-python -m unittest test_public_observation test_customer_simulator test_scenario_spec -v
+python -m unittest tests.test_public_observation tests.test_customer_simulator tests.test_scenario_spec -v
 ```
 
 Tests use synthetic public messages and pure artifact renderers, not runtime
@@ -1137,9 +1137,9 @@ Mocked tests run explicitly, avoiding repository-wide discovery and live
 `test_ollama.py`:
 
 ```sh
-python -m unittest test_llm_public_evidence test_llm_customer_simulator \
-  test_scenario_spec test_public_observation test_customer_simulator \
-  test_static_product_knowledge -q
+python -m unittest tests.test_llm_public_evidence tests.test_llm_customer_simulator \
+  tests.test_scenario_spec tests.test_public_observation tests.test_customer_simulator \
+  tests.test_static_product_knowledge -q
 ```
 
 Tests use individual synthetic public decision steps, not experiment execution.

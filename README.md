@@ -136,30 +136,51 @@ This repository contains a minimal local reproduction of the core workflow descr
 
 The prototype focuses on message classification, root-agent routing, task-creation workflow management, local task persistence, and a simple summary agent.
 
-## Current Architecture
+## Project Structure
 
-The current prototype contains the following main components:
+The repository is organised into packages instead of a flat root directory:
 
-* `classifier.py`
-  Classifies incoming messages and determines the corresponding action.
+```text
+ats-ma-support/
+├── main.py                     # CLI entry point (kept at the repository root)
+├── agents/                     # one module per agent
+│   ├── root_agent.py           # main routing agent
+│   ├── order_agent.py          # ORDER_CREATE_WF orchestration
+│   ├── support_agent.py        # enquiry / chat handling
+│   ├── task_agent.py           # task-creation workflows
+│   └── summary_agent.py        # basic project summary
+├── entity/                     # domain entities and shared contracts
+│   ├── business_result.py      # shared BusinessResult contract
+│   ├── order_creation_state.py # OrderCreationState, FinalOrderSnapshot
+│   └── workflow_state.py       # TaskCreationState
+├── workflow/                   # workflow orchestration and runtime
+│   ├── classifier.py           # incoming message classification
+│   ├── confirmation_presentation.py
+│   ├── conversation_runtime.py # in-memory conversation runtime
+│   ├── workflow_store.py       # multi-workflow persistence
+│   ├── task_store.py           # local task persistence
+│   └── order/                  # ORDER_CREATE_WF
+│       ├── order_creation_catalog.py
+│       ├── order_creation_confirmation.py
+│       ├── order_creation_controller.py
+│       ├── order_creation_extraction.py
+│       ├── order_creation_order_store.py
+│       ├── order_creation_rules.py
+│       ├── order_creation_shipping.py
+│       └── order_creation_updates.py
+├── tools/                      # shared utilities
+│   ├── knowledge_tool.py
+│   └── llm_client.py
+├── tests/                      # all test modules
+├── evaluation/                 # benchmark contracts, fixtures and runner
+├── data/                       # runtime fixtures (prices, rates, orders)
+└── evidence/                   # recorded run evidence
+```
 
-* `root_agent.py`
-  Acts as the main routing agent and dispatches messages to the appropriate sub-agent or workflow.
-
-* `task_agent.py`
-  Handles task-creation and task-related workflows.
-
-* `summary_agent.py`
-  Generates a basic project summary.
-
-* `workflow_state.py`
-  Defines the task-creation workflow state.
-
-* `workflow_store.py`
-  Persists and retrieves multiple workflow instances.
-
-* `task_store.py`
-  Persists created tasks locally.
+`main.py` stays at the repository root so `python main.py` keeps working: running
+a script puts its own directory (the repository root) on `sys.path`, which is
+what the `agents.*` / `workflow.*` / `entity.*` / `tools.*` / `evaluation.*`
+imports require.
 
 ## Workflow Management
 
@@ -221,13 +242,25 @@ Example on macOS:
 source .venv/bin/activate
 ```
 
-Individual components can then be tested directly, for example:
+The CLI entry point stays at the repository root:
 
 ```bash
-python classifier.py
-python workflow_store.py
-python task_store.py
-python root_agent.py
+python main.py
+```
+
+Individual components can be executed as modules, for example:
+
+```bash
+python -m workflow.classifier
+python -m workflow.workflow_store
+python -m workflow.task_store
+python -m agents.root_agent
+```
+
+Tests live in the `tests/` package and are run from the repository root:
+
+```bash
+python -m unittest tests.test_classifier -v
 ```
 
 ## Runtime Files

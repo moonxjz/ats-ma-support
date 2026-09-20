@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from support_agent import SupportKnowledgeContext, KnowledgeFact
+from agents.support_agent import SupportKnowledgeContext, KnowledgeFact
 
 def load_product_prices_as_knowledge(json_path: str = "data/product_prices.json") -> SupportKnowledgeContext:
     """Load product prices JSON and convert to SupportKnowledgeContext."""

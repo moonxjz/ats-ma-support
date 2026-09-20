@@ -10,7 +10,7 @@ from typing import Annotated
 from pydantic import Field
 from evaluation.scenario_spec import Nonblank
 
-from confirmation_presentation import ADDRESS_FIELDS, CONFIG_FIELDS, CUSTOMER_FIELDS, PRICE_FIELDS
+from workflow.confirmation_presentation import ADDRESS_FIELDS, CONFIG_FIELDS, CUSTOMER_FIELDS, PRICE_FIELDS
 from evaluation.public_observation import (
     ArtifactValue, AvailabilityEvidence, EvidenceRef, FIELD_LABELS, LABEL_FIELDS, PublicContract,
     PublicArtifact, RequestedFieldEvidence, TOPICS,

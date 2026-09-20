@@ -11,7 +11,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from confirmation_presentation import ADDRESS_FIELDS, CONFIG_FIELDS, CUSTOMER_FIELDS, PRICE_FIELDS
+from workflow.confirmation_presentation import ADDRESS_FIELDS, CONFIG_FIELDS, CUSTOMER_FIELDS, PRICE_FIELDS
 from evaluation.scenario_spec import ConfigurationField, Nonblank
 
 NonnegativeInt = Annotated[int, Field(ge=0)]
