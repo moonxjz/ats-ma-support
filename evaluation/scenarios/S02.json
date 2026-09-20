@@ -1,82 +1,17 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "scenario_id": "S02",
-  "name": "Partial-Knowledge Mixed Interaction",
-  "customer": {
-    "product_knowledge": "PARTIAL",
-    "description": "    - Customer intends to purchase a custom pool table.\n    - Customer already knows part of the desired product configuration\n      and provides those selections in the initial message.\n    - Customer does not initially know the available options for the\n      remaining configuration fields.\n    - When asked to choose an unfamiliar configuration field, the\n      customer first asks what options are available.\n    - After Support provides authoritative available options, the\n      customer selects the scenario-defined target option.\n    - Remaining required customer, delivery, and room information is\n      provided when requested.\n    - All final selections form a valid configuration.\n    - Configuration confirmation is accepted without modification.\n    - Final confirmation is accepted without modification.",
-    "ground_truth": {
-      "customer": {
-        "customer_name": "Demo2 Customer2",
-        "phone": "0400000002",
-        "email": "customer2@example.com"
-      },
-      "delivery_address": {
-        "address": "2 Example Street",
-        "city": "Canberra",
-        "state": "ACT",
-        "postcode": "2900",
-        "country": "Australia"
-      },
-      "room_size": "5.0m x 3.9m",
-      "configuration": {
-        "product_model": "Kings Cross",
-        "table_size": "7ft",
-        "timber": "Zebra",
-        "timber_painting": "Natural",
-        "felt_color": "Black",
-        "bracket": "Copper",
-        "top_profile": "Live-Edge",
-        "quantity": 1
-      }
-    },
-    "initial_message": "I'd like to order one 7ft Kings Cross pool table with a Live-Edge top rail profile and Copper bracket.",
-    "initial_disclosures": [
-      "product_model",
-      "table_size",
-      "bracket",
-      "top_profile",
-      "quantity"
-    ],
-    "initially_known_configuration_fields": [
-      "product_model",
-      "table_size",
-      "bracket",
-      "top_profile"
-    ],
-    "conversation_policy": {
-      "configuration_confirmation": {
-        "behavior": "CONFIRM_WITHOUT_CHANGE",
-        "requires_visible_artifact": true,
-        "requires_explicit_confirmation_request": true,
-        "requires_artifact_matches_ground_truth": true
-      },
-      "final_confirmation": {
-        "behavior": "CONFIRM_WITHOUT_CHANGE",
-        "requires_visible_artifact": true,
-        "requires_explicit_confirmation_request": true,
-        "requires_artifact_matches_ground_truth": true
-      },
-      "configuration_selection": {
-        "type": "MIXED_DIRECT_AND_DISCOVER",
-        "selection_constraints": {
-          "select_target_only_if_offered": true,
-          "if_target_not_offered": "ASK_ABOUT_TARGET_OPTION"
-        },
-        "discovery_fields": [
-          "timber",
-          "timber_painting",
-          "felt_color"
-        ],
-        "if_options_unknown": "ASK_AVAILABLE_OPTIONS"
-      },
-      "customer_information_when_requested": "PROVIDE_REQUESTED_INFORMATION",
-      "room_information_when_requested": "PROVIDE_GROUND_TRUTH_ROOM_SIZE"
-    }
+  "name": "Guided Catalog Discovery",
+  "source": {
+    "source_file": "evaluation/scenario_sources/Conversation Scenario-CSimulator.xlsx",
+    "worksheet": "Conversation Profiles",
+    "source_sha256": "476c83d6b597decd258292d43e83314156a5b71cfd1f45560a37a6beb6578128",
+    "source_version": "Authoritative Conversation Scenario Source v1",
+    "scenario_column": "C"
   },
   "initial_state": {
-    "workflow_state": null,
-    "existing_order": null
+    "conversation": "EMPTY",
+    "order_store": "EMPTY_ISOLATED"
   },
   "fixtures": {
     "product_catalog": {
@@ -88,27 +23,157 @@
       "sha256": "933d9ef7ac2910e74642f874e30a78be97935a48a19defe7f3d6f9ec72650cb3"
     }
   },
+  "customer": {
+    "description": "    - Customer intends to purchase a custom pool table.\n    - Customer initially does not know the available configuration options.\n    - When asked to choose an unfamiliar configuration field,\n      the customer first asks what options are available.\n    - After Support provides authoritative available options,\n      the customer selects the scenario-defined target option.\n    - All final selections form a valid configuration.\n    - Configuration confirmation is accepted without modification.\n    - Final confirmation is accepted without modification.",
+    "ground_truth": {
+      "customer": {
+        "customer_name": "Demo2 Customer2",
+        "phone": "0400000002",
+        "email": "customer2@example.com",
+        "company_name": null,
+        "customer_instructions": null
+      },
+      "delivery_address": {
+        "address": "2 Example Street",
+        "city": "Sydney",
+        "state": "NSW",
+        "postcode": "2000",
+        "country": "Australia"
+      },
+      "room_size": "5.3m x 4.1m",
+      "configuration": {
+        "product_model": "Saga",
+        "table_size": "8ft",
+        "timber": "Marri",
+        "timber_painting": "Natural",
+        "felt_color": "Olive",
+        "bracket": "Standard rubber",
+        "top_profile": "Live-Edge",
+        "quantity": 1
+      },
+      "initial_configuration_overrides": {}
+    },
+    "initial_message": "I'd like to place an order for a custom pool table, but I don't know which model to choose. What models do you have available?",
+    "initial_disclosures": [],
+    "initially_known_configuration_fields": [],
+    "conversation_policy": {
+      "disclosure": {
+        "type": "ANSWER_REQUESTED_INFORMATION"
+      },
+      "configuration_selection": {
+        "type": "DISCOVER_THEN_SELECT",
+        "discovery_fields": [
+          "product_model",
+          "table_size",
+          "timber",
+          "timber_painting",
+          "felt_color",
+          "bracket",
+          "top_profile"
+        ],
+        "if_options_unknown": "ASK_AVAILABLE_OPTIONS",
+        "selection": "ONLY_AFTER_POSITIVE_PUBLIC_OBSERVATION",
+        "if_target_not_offered": "ASK_ABOUT_TARGET_OPTION"
+      },
+      "configuration_confirmation": {
+        "type": "CONFIRM_WITHOUT_CHANGE",
+        "response": null
+      },
+      "validation_failure_response": null,
+      "final_confirmation": {
+        "type": "CONFIRM_WITHOUT_CHANGE",
+        "response": null
+      }
+    }
+  },
   "evaluation": {
     "system_derived": {
-      "product_sku": "B7KINGX",
-      "pricing": {
-        "base_model_price": "5350",
-        "customisation_price": "1550",
-        "unit_price": "6900",
-        "shipping_cost": "1202",
-        "total_price": "8102"
-      }
+      "pricing": [
+        {
+          "phase": "FINAL",
+          "expectation_type": "EXECUTED",
+          "product_sku": "B8SAGA",
+          "pricing": {
+            "base_model_price": "5750",
+            "customisation_price": "800",
+            "unit_price": "6550",
+            "shipping_cost": "1518",
+            "total_price": "8068"
+          }
+        }
+      ]
     },
     "workflow": {
-      "configuration_validation": "VALID",
-      "configuration_confirmation": "CONFIRMED",
-      "final_confirmation": "CONFIRMED"
+      "milestones": [
+        {
+          "kind": "VALIDATION",
+          "id": "FINAL_VALIDATION",
+          "phase": "FINAL",
+          "result": {
+            "status": "VALID"
+          }
+        },
+        {
+          "kind": "CONFIGURATION_REVIEW",
+          "id": "FINAL_REVIEW",
+          "phase": "FINAL",
+          "result": {
+            "status": "CONFIRMED"
+          }
+        },
+        {
+          "kind": "PRICING",
+          "id": "FINAL_PRICING",
+          "phase": "FINAL",
+          "status": "COMPLETED"
+        },
+        {
+          "kind": "FINAL_CONFIRMATION",
+          "id": "FINAL_CONFIRMATION",
+          "result": {
+            "status": "CONFIRMED"
+          }
+        },
+        {
+          "kind": "ORDER_CREATION",
+          "id": "ORDER_CREATION",
+          "status": "EXECUTED"
+        },
+        {
+          "kind": "TERMINATION",
+          "id": "TERMINATION",
+          "status": "COMPLETED",
+          "side_effect_allowed": true
+        }
+      ],
+      "precedence": [
+        {
+          "before": "FINAL_VALIDATION",
+          "after": "FINAL_REVIEW"
+        },
+        {
+          "before": "FINAL_REVIEW",
+          "after": "FINAL_PRICING"
+        },
+        {
+          "before": "FINAL_PRICING",
+          "after": "FINAL_CONFIRMATION"
+        },
+        {
+          "before": "FINAL_CONFIRMATION",
+          "after": "ORDER_CREATION"
+        },
+        {
+          "before": "ORDER_CREATION",
+          "after": "TERMINATION"
+        }
+      ]
     },
     "outcome": {
       "result_status": "SUCCESS",
       "reason": "ORDER_CREATED",
       "workflow_status": "COMPLETED",
-      "committed_order_count": 1
+      "expected_persisted_order_count": 1
     },
     "invariants": {
       "I1": "SATISFIED",
@@ -120,11 +185,11 @@
       "I7": "NOT_EXERCISED",
       "I8": "SATISFIED"
     },
-    "interaction_properties": {
-      "direct_selection_preserved": true,
-      "catalog_discovery_supported": true,
-      "active_workflow_general_enquiry_supported": true,
-      "workflow_continuity_after_enquiry": true
-    }
+    "interaction_properties": [
+      "catalog_discovery_supported",
+      "target_selected_only_after_observation",
+      "active_workflow_general_enquiry_supported",
+      "workflow_continuity_after_enquiry"
+    ]
   }
 }

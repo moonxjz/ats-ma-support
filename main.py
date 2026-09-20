@@ -46,7 +46,7 @@ def main():
     logger.info('Session initialised: %s', session.support_ticket_id)
     processor = partial(process_order_creation_message, order_store_path=args.order_store_path)
     pending = None
-    simulator = create_simple_simulator(f"evaluation/scenarios_v2_candidates/{args.scenario_id}.json")
+    simulator = create_simple_simulator(f"evaluation/scenarios/{args.scenario_id}.json")
     logger.info('Scenario Id is: %s', args.scenario_id)
     print(f'Conversation / support ticket: {session.support_ticket_id}')
     logger.info(f'Conversation / support ticket: {session.support_ticket_id}')
@@ -82,22 +82,22 @@ def main():
         print(f"{'='*60}")
         print(message)
         logger.info('Customer message (turn %d): %s', turn, message)
-        result = (retry_pending_response(session, pending) if pending else
+        if args.debug:
+            result = (retry_pending_response(session, pending) if pending else
                                 process_customer_message(session, message, order_creation_processor=processor, support_knowledge=load_product_prices_as_knowledge()))
-        # try:
-        #     result = (retry_pending_response(session, pending) if pending else
-        #                 process_customer_message(session, message, order_creation_processor=processor))
-        # except TurnFailure as exc:
-        #     pending = exc.pending_turn
-        #     logger.error('TurnFailure at turn %d (phase=%s): %s', turn, exc.phase, exc)
-        #     print(f'Diagnostic: {exc}')
-        #     if args.debug:
-        #         print(f'Cause: {exc.__cause__!r}')
-        #     if exc.phase == 'business execution':
-        #         logger.critical('Business execution failure – terminating conversation')
-        #         print('Diagnostic: execution did not return an authoritative outcome. No automatic replay will be attempted.')
-        #         break
-        #     continue
+        else:
+            try:
+                result = (retry_pending_response(session, pending) if pending else
+                            process_customer_message(session, message, order_creation_processor=processor))
+            except TurnFailure as exc:
+                pending = exc.pending_turn
+                logger.error('TurnFailure at turn %d (phase=%s): %s', turn, exc.phase, exc)
+                print(f'Diagnostic: {exc}')
+                if exc.phase == 'business execution':
+                    logger.critical('Business execution failure – terminating conversation')
+                    print('Diagnostic: execution did not return an authoritative outcome. No automatic replay will be attempted.')
+                    break
+                continue
         session = result.session
         pending = None
         logger.info('Agent response (turn %d): %s', turn, result.customer_response.text)

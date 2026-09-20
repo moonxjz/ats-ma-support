@@ -1,15 +1,37 @@
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "scenario_id": "S03",
-  "name": "Guided Catalog Discovery",
+  "name": "Configuration Revision Before Confirmation",
+  "source": {
+    "source_file": "evaluation/scenario_sources/Conversation Scenario-CSimulator.xlsx",
+    "worksheet": "Conversation Profiles",
+    "source_sha256": "476c83d6b597decd258292d43e83314156a5b71cfd1f45560a37a6beb6578128",
+    "source_version": "Authoritative Conversation Scenario Source v1",
+    "scenario_column": "D"
+  },
+  "initial_state": {
+    "conversation": "EMPTY",
+    "order_store": "EMPTY_ISOLATED"
+  },
+  "fixtures": {
+    "product_catalog": {
+      "path": "data/product_prices.json",
+      "sha256": "ef8ac04e8ac00a6690f60ecd53b4418fbc4bdd3ccc2d527e65cdb2afdb9cc007"
+    },
+    "shipping": {
+      "path": "data/shipping_rates.json",
+      "sha256": "933d9ef7ac2910e74642f874e30a78be97935a48a19defe7f3d6f9ec72650cb3"
+    }
+  },
   "customer": {
-    "product_knowledge": "NOVICE",
-    "description": "    - Customer intends to purchase a custom pool table.\n    - Customer initially does not know the available configuration options.\n    - When asked to choose an unfamiliar configuration field,\n      the customer first asks what options are available.\n    - After Support provides authoritative available options,\n      the customer selects the scenario-defined target option.\n    - All final selections form a valid configuration.\n    - Configuration confirmation is accepted without modification.\n    - Final confirmation is accepted without modification.",
+    "description": "    - Customer knows the complete desired product configuration.\n    - Customer provides all initial configuration selections in the initial message.\n    - Remaining required customer, delivery, and room information is provided when requested.\n    - Initial configuration is valid.\n    - During configuration confirmation, the customer rejects the presented configuration and requests a material configuration change.\n    - The requested configuration change affects the unit price and therefore requires configuration re-validation and price recalculation.\n    - The revised configuration is valid.\n    - The customer confirms the revised configuration.\n    - Final confirmation is accepted without further modification.",
     "ground_truth": {
       "customer": {
         "customer_name": "Demo3 Customer3",
         "phone": "0400000003",
-        "email": "customer3@example.com"
+        "email": "customer3@example.com",
+        "company_name": null,
+        "customer_instructions": null
       },
       "delivery_address": {
         "address": "3 Example Street",
@@ -24,84 +46,206 @@
         "table_size": "8ft",
         "timber": "Marri",
         "timber_painting": "Natural",
-        "felt_color": "Olive",
-        "bracket": "Standard rubber",
+        "felt_color": "Red",
+        "bracket": "Copper",
         "top_profile": "Live-Edge",
         "quantity": 1
+      },
+      "initial_configuration_overrides": {
+        "bracket": "Standard rubber"
       }
     },
-    "initial_message": " I'd like to place an order for a custom pool table, but I don't know which model to choose. What models do you have available?",
-    "initial_disclosures": [],
-    "initially_known_configuration_fields": [],
+    "initial_message": "I'd like to order one 8ft Saga pool table with a Live-Edge top rail profile and Standard rubber. For timber, I'd like Marri in Natural finish, with Red felt.",
+    "initial_disclosures": [
+      "product_model",
+      "table_size",
+      "timber",
+      "timber_painting",
+      "felt_color",
+      "bracket",
+      "top_profile",
+      "quantity"
+    ],
+    "initially_known_configuration_fields": [
+      "product_model",
+      "table_size",
+      "timber",
+      "timber_painting",
+      "felt_color",
+      "bracket",
+      "top_profile"
+    ],
     "conversation_policy": {
+      "disclosure": {
+        "type": "ANSWER_REQUESTED_INFORMATION"
+      },
+      "configuration_selection": null,
       "configuration_confirmation": {
-        "behavior": "CONFIRM_WITHOUT_CHANGE",
-        "requires_visible_artifact": true,
-        "requires_explicit_confirmation_request": true,
-        "requires_artifact_matches_ground_truth": true
-      },
-      "final_confirmation": {
-        "behavior": "CONFIRM_WITHOUT_CHANGE",
-        "requires_visible_artifact": true,
-        "requires_explicit_confirmation_request": true,
-        "requires_artifact_matches_ground_truth": true
-      },
-      "configuration_selection": {
-        "type": "DISCOVER_THEN_SELECT",
-        "selection_constraints": {
-          "select_target_only_if_offered": true,
-          "if_target_not_offered": "ASK_ABOUT_TARGET_OPTION"
-        },
-        "discovery_fields": [
-          "product_model",
-          "table_size",
-          "timber",
-          "timber_painting",
-          "felt_color",
-          "bracket",
-          "top_profile"
+        "modifications": [
+          {
+            "field": "bracket",
+            "from": "INITIAL_OVERRIDE",
+            "to": "FINAL_TARGET"
+          }
         ],
-        "if_options_unknown": "ASK_AVAILABLE_OPTIONS"
+        "response": {
+          "type": "EXACT_TEXT",
+          "text": "Actually, I don't want Standard rubber. Please change it to a Copper bracket instead."
+        },
+        "type": "REJECT_AND_MODIFY_CONFIGURATION",
+        "revised_confirmation": {
+          "type": "CONFIRM_WITHOUT_CHANGE",
+          "response": null
+        }
       },
-      "customer_information_when_requested": "PROVIDE_REQUESTED_INFORMATION",
-      "room_information_when_requested": "PROVIDE_GROUND_TRUTH_ROOM_SIZE"
-    }
-  },
-  "initial_state": {
-    "workflow_state": null,
-    "existing_order": null
-  },
-  "fixtures": {
-    "product_catalog": {
-      "path": "data/product_prices.json",
-      "sha256": "ef8ac04e8ac00a6690f60ecd53b4418fbc4bdd3ccc2d527e65cdb2afdb9cc007"
-    },
-    "shipping": {
-      "path": "data/shipping_rates.json",
-      "sha256": "933d9ef7ac2910e74642f874e30a78be97935a48a19defe7f3d6f9ec72650cb3"
+      "validation_failure_response": null,
+      "final_confirmation": {
+        "type": "CONFIRM_WITHOUT_CHANGE",
+        "response": null
+      }
     }
   },
   "evaluation": {
     "system_derived": {
-      "product_sku": "B8SAGA",
-      "pricing": {
-        "base_model_price": "5750",
-        "customisation_price": "800",
-        "unit_price": "6550",
-        "shipping_cost": "1518",
-        "total_price": "8068"
-      }
+      "pricing": [
+        {
+          "phase": "INITIAL",
+          "expectation_type": "REFERENCE_BASELINE",
+          "product_sku": "B8SAGA",
+          "pricing": {
+            "base_model_price": "5750",
+            "customisation_price": "800",
+            "unit_price": "6550",
+            "shipping_cost": "1518",
+            "total_price": "8068"
+          }
+        },
+        {
+          "phase": "FINAL",
+          "expectation_type": "EXECUTED",
+          "product_sku": "B8SAGA",
+          "pricing": {
+            "base_model_price": "5750",
+            "customisation_price": "1550",
+            "unit_price": "7300",
+            "shipping_cost": "1518",
+            "total_price": "8818"
+          }
+        }
+      ]
     },
     "workflow": {
-      "configuration_validation": "VALID",
-      "configuration_confirmation": "CONFIRMED",
-      "final_confirmation": "CONFIRMED"
+      "milestones": [
+        {
+          "kind": "VALIDATION",
+          "id": "INITIAL_VALIDATION",
+          "phase": "INITIAL",
+          "result": {
+            "status": "VALID"
+          }
+        },
+        {
+          "kind": "CONFIGURATION_REVIEW",
+          "id": "INITIAL_REVIEW",
+          "phase": "INITIAL",
+          "result": {
+            "status": "REJECTED_WITH_MODIFICATION",
+            "changed_fields": [
+              "bracket"
+            ]
+          }
+        },
+        {
+          "kind": "CONFIGURATION_CHANGE",
+          "id": "CONFIGURATION_CHANGE",
+          "status": "APPLIED",
+          "changed_fields": [
+            "bracket"
+          ],
+          "material_change_detected": true,
+          "price_recalculation_required": true
+        },
+        {
+          "kind": "VALIDATION",
+          "id": "FINAL_VALIDATION",
+          "phase": "FINAL",
+          "result": {
+            "status": "VALID"
+          }
+        },
+        {
+          "kind": "CONFIGURATION_REVIEW",
+          "id": "FINAL_REVIEW",
+          "phase": "FINAL",
+          "result": {
+            "status": "CONFIRMED"
+          }
+        },
+        {
+          "kind": "PRICING",
+          "id": "FINAL_PRICING",
+          "phase": "FINAL",
+          "status": "COMPLETED"
+        },
+        {
+          "kind": "FINAL_CONFIRMATION",
+          "id": "FINAL_CONFIRMATION",
+          "result": {
+            "status": "CONFIRMED"
+          }
+        },
+        {
+          "kind": "ORDER_CREATION",
+          "id": "ORDER_CREATION",
+          "status": "EXECUTED"
+        },
+        {
+          "kind": "TERMINATION",
+          "id": "TERMINATION",
+          "status": "COMPLETED",
+          "side_effect_allowed": true
+        }
+      ],
+      "precedence": [
+        {
+          "before": "INITIAL_VALIDATION",
+          "after": "INITIAL_REVIEW"
+        },
+        {
+          "before": "INITIAL_REVIEW",
+          "after": "CONFIGURATION_CHANGE"
+        },
+        {
+          "before": "CONFIGURATION_CHANGE",
+          "after": "FINAL_VALIDATION"
+        },
+        {
+          "before": "FINAL_VALIDATION",
+          "after": "FINAL_REVIEW"
+        },
+        {
+          "before": "FINAL_REVIEW",
+          "after": "FINAL_PRICING"
+        },
+        {
+          "before": "FINAL_PRICING",
+          "after": "FINAL_CONFIRMATION"
+        },
+        {
+          "before": "FINAL_CONFIRMATION",
+          "after": "ORDER_CREATION"
+        },
+        {
+          "before": "ORDER_CREATION",
+          "after": "TERMINATION"
+        }
+      ]
     },
     "outcome": {
       "result_status": "SUCCESS",
       "reason": "ORDER_CREATED",
       "workflow_status": "COMPLETED",
-      "committed_order_count": 1
+      "expected_persisted_order_count": 1
     },
     "invariants": {
       "I1": "SATISFIED",
@@ -113,11 +257,17 @@
       "I7": "NOT_EXERCISED",
       "I8": "SATISFIED"
     },
-    "interaction_properties": {
-      "catalog_discovery_supported": true,
-      "target_selected_only_after_observation": true,
-      "active_workflow_general_enquiry_supported": true,
-      "workflow_continuity_after_enquiry": true
-    }
+    "interaction_properties": [
+      "complete_initial_configuration_provided",
+      "initial_configuration_valid",
+      "configuration_revision_supported",
+      "material_change_detected",
+      "prior_configuration_snapshot_invalidated",
+      "configuration_revalidated_after_change",
+      "price_recalculated_after_material_change",
+      "revised_configuration_confirmed",
+      "final_confirmation_without_change",
+      "committed_order_matches_revised_configuration"
+    ]
   }
 }
