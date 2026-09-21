@@ -34,6 +34,11 @@ def _finish(base, message, classification, execution, response):
     if not isinstance(response, CustomerResponse):
         raise TypeError("Response composer must return CustomerResponse.")
     response = CustomerResponse.model_validate(response)
+    # A two-category turn appends the secondary category's answer after the reply
+    # composed for the primary outcome, producing one customer-visible message.
+    additional = execution.additional_response
+    if additional is not None:
+        response = CustomerResponse(text="\n\n".join((response.text, additional.text)))
     history = deepcopy(base.history)
     history.extend([ConversationMessage(role="user", content=message),
                     ConversationMessage(role="assistant", content=response.text)])
@@ -70,9 +75,9 @@ def process_customer_message(
         classification = classifier(current_message=current_message, conversation_history=deepcopy(base.history),
                                     state=deepcopy(base.workflow_state))
         phase = "routing"
-        routing = route_message(classification, deepcopy(base.workflow_state))
+        routings = route_message(classification, deepcopy(base.workflow_state))
         phase = "business execution"
-        execution = execute_route(routing, current_message, deepcopy(base.history),
+        execution = execute_route(routings, current_message, deepcopy(base.history),
                                   conversation_id=base.conversation_id, state=deepcopy(base.workflow_state),
                                   order_creation_processor=order_creation_processor,
                                   support_processor=support_processor, support_knowledge=deepcopy(knowledge))

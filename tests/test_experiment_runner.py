@@ -73,8 +73,8 @@ class ScriptedExecution:
         self.calls.append((deepcopy(session),message,deepcopy(support_knowledge)))
         if not self.events: raise AssertionError('Unexpected runtime invocation')
         event=self.events.pop(0)
-        classification=ClassifierResult(category=MessageCategory(event.category),confidence=1.0,explanation='scripted public trajectory')
-        route=route_message(classification,session.workflow_state)
+        classification=ClassifierResult(categories=[MessageCategory(event.category)],confidence=1.0,explanation='scripted public trajectory')
+        route=route_message(classification,session.workflow_state)[0]
         state=deepcopy(session.workflow_state)
         support=None; business=None
         if event.category=='GENERAL_ENQUIRY':

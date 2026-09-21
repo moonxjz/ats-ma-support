@@ -9,7 +9,7 @@ from agents.order_agent import process_order_creation_message
 from entity.conversation import ConversationMessage
 from entity.order_creation_state import OrderCreationState, OrderWorkflowStatus
 from entity.business_result import BusinessResult
-from entity.support import SupportAction, SupportActionResult, SupportKnowledgeContext
+from entity.support import CustomerResponse, SupportAction, SupportActionResult, SupportKnowledgeContext
 from agents.support_agent import handle_support_action
 
 from entity.routing import TargetAgent, BusinessAction, RoutingStatus, RoutingReason, RoutingResult, RootExecutionResult
@@ -68,23 +68,50 @@ def _route_category(category: MessageCategory, state: OrderCreationState | None)
                 else RoutingReason.DOWNSTREAM_NOT_IMPLEMENTED),
     )
 
+# A coexisting order-side intent is dispatched before GENERAL_ENQUIRY, so a
+# combined turn advances the workflow first and then answers the question.
+_ORDER_SIDE_CATEGORIES = (MessageCategory.CREATE_ORDER, MessageCategory.WORKFLOW_RESPONSE)
+
+
+def _dispatch_order(category: MessageCategory) -> int:
+    return 0 if category in _ORDER_SIDE_CATEGORIES else 1
+
+
 def route_message(
     classification: ClassifierResult,
     state: OrderCreationState | None = None,
-) -> RoutingResult:
-    """Route an already classified customer turn, with no LLM call or execution.
+) -> list[RoutingResult]:
+    """Route every classified category of a turn, with no LLM call or execution.
 
-    Wt contributes only workflow identity and active status. Stage, pending fields,
-    confirmations, validation and pricing evidence play no part in routing.
+    Returns one RoutingResult per category, ordered for dispatch (order-side
+    first, then any coexisting GENERAL_ENQUIRY). A single-category classification
+    therefore yields the one-element list equivalent to the previous behaviour.
+    Wt contributes only workflow identity and active status. Stage, pending
+    fields, confirmations, validation and pricing evidence play no part in routing.
     """
     if not isinstance(classification, ClassifierResult):
         raise TypeError("classification must be a ClassifierResult.")
     # Revalidate even a caller-mutated/model_construct-created classifier result.
     validated = ClassifierResult.model_validate(classification.model_dump(warnings=False), strict=True)
-    return _route_category(validated.category, state)
+    ordered = sorted(validated.categories, key=_dispatch_order)
+    return [_route_category(category, state) for category in ordered]
+
+
+def _dispatch_support(routing: RoutingResult, current_message: str,
+                      history: list[ConversationMessage], support_processor: Callable,
+                      support_knowledge: SupportKnowledgeContext | None) -> SupportActionResult:
+    """Run one Support route and verify it returns the matching action result."""
+    if not callable(support_processor):
+        raise TypeError("support_processor must be callable.")
+    action = SupportAction(routing.business_action.value)
+    support_result = support_processor(action, current_message, conversation_history=history,
+                                       business_context=support_knowledge)
+    if not isinstance(support_result, SupportActionResult) or support_result.action != action:
+        raise TypeError("Support processor must return a matching SupportActionResult.")
+    return support_result
 
 def execute_route(
-    routing: RoutingResult,
+    routing: list[RoutingResult],
     current_message: str,
     conversation_history: list[ConversationMessage],
     *,
@@ -94,7 +121,15 @@ def execute_route(
     support_processor: Callable = handle_support_action,
     support_knowledge: SupportKnowledgeContext | None = None,
 ) -> RootExecutionResult:
-    """Dispatch an already-selected route; technical exceptions propagate.
+    """Dispatch every routed category of one turn; technical exceptions propagate.
+
+    The PRIMARY route (index 0) owns the single outcome: exactly one of
+    business_result and support_result is returned, preserving that contract.
+    Additional READY routes contribute no outcome — their already-composed
+    wording is returned in additional_response so the caller can emit one
+    concatenated customer reply (workflow/order answer first, enquiry second).
+    A non-READY primary route stops the turn exactly as before, with no
+    secondary category executed.
 
     Creating default Wt when CREATE_ORDER has no supplied state is lifecycle
     bootstrap only. Root neither selects subsequent stages nor performs recovery.
@@ -107,12 +142,10 @@ def execute_route(
     order store directly. executed=True means normal agent return, including a
     NEEDS_USER_INPUT, FAILURE or CANCELLED business outcome.
     """
-    if not isinstance(routing, RoutingResult):
-        raise TypeError("routing must be a RoutingResult.")
-    routing = RoutingResult.model_validate(routing)
-    expected = _route_category(routing.source_category, state)
-    if routing != expected:
-        raise ValueError("Routing decision does not match the current category/state mapping.")
+    if not isinstance(routing, list) or not routing:
+        raise TypeError("routing must be a non-empty list of RoutingResult.")
+    if not all(isinstance(item, RoutingResult) for item in routing):
+        raise TypeError("routing must be a non-empty list of RoutingResult.")
     if not isinstance(current_message, str) or not current_message.strip():
         raise ValueError("current_message must be a non-blank string.")
     if not isinstance(conversation_id, str) or not conversation_id.strip():
@@ -120,25 +153,46 @@ def execute_route(
     if state is not None and state.conversation_id != conversation_id:
         raise ValueError("Workflow conversation_id does not match the current conversation.")
     history = TypeAdapter(list[ConversationMessage]).validate_python(conversation_history, strict=True)
-    if routing.status != RoutingStatus.READY:
-        return RootExecutionResult(routing=routing, executed=False, state=state, business_result=None)
-    if routing.target_agent == TargetAgent.SUPPORT_AGENT:
-        if not callable(support_processor):
-            raise TypeError("support_processor must be callable.")
-        action = SupportAction(routing.business_action.value)
-        support_result = support_processor(action, current_message, conversation_history=history,
-                                           business_context=support_knowledge)
-        if not isinstance(support_result, SupportActionResult) or support_result.action != action:
-            raise TypeError("Support processor must return a matching SupportActionResult.")
-        return RootExecutionResult(routing=routing, executed=True, state=state,
-                                   business_result=None, support_result=support_result)
-    if not callable(order_creation_processor):
-        raise TypeError("order_creation_processor must be callable.")
-    # Default initialization is lifecycle/bootstrap, not a workflow transition.
-    dispatch_state = state if state is not None else OrderCreationState(conversation_id=conversation_id)
-    updated_state, business_result = order_creation_processor(current_message, history, dispatch_state)
-    if not isinstance(updated_state, OrderCreationState) or not isinstance(business_result, BusinessResult):
-        raise TypeError("Order creation processor must return OrderCreationState and BusinessResult.")
-    return RootExecutionResult(
-        routing=routing, executed=True, state=updated_state, business_result=business_result,
-    )
+
+    primary = RoutingResult.model_validate(routing[0])
+    if primary != _route_category(primary.source_category, state):
+        raise ValueError("Routing decision does not match the current category/state mapping.")
+    if primary.status != RoutingStatus.READY:
+        return RootExecutionResult(routing=primary, executed=False, state=state, business_result=None)
+
+    outcome_state = state
+    business_result = None
+    support_result = None
+    if primary.target_agent == TargetAgent.SUPPORT_AGENT:
+        support_result = _dispatch_support(primary, current_message, history,
+                                           support_processor, support_knowledge)
+    else:
+        if not callable(order_creation_processor):
+            raise TypeError("order_creation_processor must be callable.")
+        # Default initialization is lifecycle/bootstrap, not a workflow transition.
+        dispatch_state = state if state is not None else OrderCreationState(conversation_id=conversation_id)
+        updated_state, business_result = order_creation_processor(current_message, history, dispatch_state)
+        if not isinstance(updated_state, OrderCreationState) or not isinstance(business_result, BusinessResult):
+            raise TypeError("Order creation processor must return OrderCreationState and BusinessResult.")
+        outcome_state = updated_state
+
+    if len(routing) == 1:
+        return RootExecutionResult(routing=primary, executed=True, state=outcome_state,
+                                   business_result=business_result, support_result=support_result)
+
+    extra_texts = []
+    for extra in routing[1:]:
+        extra = RoutingResult.model_validate(extra)
+        if extra != _route_category(extra.source_category, outcome_state):
+            raise ValueError("Routing decision does not match the current category/state mapping.")
+        if extra.status != RoutingStatus.READY:
+            continue
+        if extra.target_agent != TargetAgent.SUPPORT_AGENT:
+            raise ValueError("Only a SUPPORT_AGENT secondary route can be combined into one reply.")
+        dispatched = _dispatch_support(extra, current_message, history,
+                                       support_processor, support_knowledge)
+        extra_texts.append(dispatched.response.text)
+    additional = CustomerResponse(text="\n\n".join(extra_texts)) if extra_texts else None
+    return RootExecutionResult(routing=primary, executed=True, state=outcome_state,
+                               business_result=business_result, support_result=support_result,
+                               additional_response=additional)

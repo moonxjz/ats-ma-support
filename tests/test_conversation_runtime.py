@@ -26,7 +26,7 @@ from tests.test_order_creation_controller import complete_customer_state
 
 
 def classification(category):
-    return ClassifierResult(category=category, confidence=0.9, explanation='Customer intent.')
+    return ClassifierResult(categories=[category], confidence=0.9, explanation='Customer intent.')
 
 
 def fake_support_chat(**kwargs):
@@ -488,7 +488,7 @@ class LiveRuntimeTests(unittest.TestCase):
                     trace['persisted_orders'] = json.loads(store.read_text()) if store.exists() else []
                     trace['observed_artifacts'] = observed.copy()
                     print('TURN_DIAGNOSTIC_JSON:', json.dumps(trace, ensure_ascii=False), flush=True)
-                print('Classification:', result.classification.category.value, flush=True)
+                print('Classification:', result.classification.categories[0].value, flush=True)
                 print('Support:', result.customer_response.text, flush=True)
                 if business.result_status.value == 'SUCCESS':
                     break

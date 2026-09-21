@@ -9,6 +9,15 @@ from entity.conversation import ConversationMessage
 MODEL_NAME = "qwen3:4b"
 HISTORY_LIMIT = 5
 
+# Reinforced each turn: answer only what was asked, ask only about the pending field.
+TURN_INSTRUCTION = (
+    "Before replying: answer ONLY what the agent asked for. Do not volunteer any "
+    "configuration selection the agent did not ask you to choose. You may ask one "
+    "short question only about the field the agent has just asked you to choose, and "
+    "only if you do not yet know its options. Never ask about a field in advance and "
+    "never repeat a question."
+)
+
 class SimpleCustomerSimulator:
     """Generates customer responses based on scenario ground_truth and conversation_policy.
     
@@ -73,7 +82,7 @@ class SimpleCustomerSimulator:
 - Postcode: {address['postcode']}
 - Country: {address['country']}
 
-## Product Configuration You Want
+## Product Configuration You Want (target outcome, NOT prior knowledge)
 - Product Model: {config['product_model']}
 - Table Size: {config['table_size']}
 - Timber: {config['timber']}
@@ -82,9 +91,15 @@ class SimpleCustomerSimulator:
 - Bracket: {config['bracket']}
 - Top Profile: {config['top_profile']}
 - Quantity: {config['quantity']}
+These are the choices you will end up with. For every field listed as unknown above,
+you do NOT know that this value exists or is offered: never name or select it until
+the agent asks you to choose that field and has shown you the available options.
 
 ## Conversation Strategy
 {self._format_policy()}
+
+## What You Know About The Options
+{self._format_option_knowledge()}
 
 ## Important Rules
 1. Follow the description in the scenario
@@ -92,7 +107,18 @@ class SimpleCustomerSimulator:
 3. When confirming configuration, only confirm if you see the complete configuration list and it fully matches your requirements
 4. When confirming the final order, only confirm if you see the complete order details and everything is correct
 5. Do not proactively provide information that was not requested
-6. Responses should be natural and concise, like a real customer"""
+6. Responses should be natural and concise, like a real customer
+
+## Answering and Asking (answer only what was asked - never chase the agent)
+7. Answer ONLY what the agent asked for. Do not volunteer a configuration selection
+   for a field the agent did not ask you to choose, even if you know what you want.
+8. You may ask what options are available ONLY for the field the agent has just asked
+   you to choose (the currently pending field), and only ONCE for that field.
+9. Ask at most ONE short question in a reply. Never ask about the next field in
+   advance, never repeat a question, and never ask about two fields at once.
+10. Once the agent has listed the options for a field, do not ask about that field
+   again: choose your option when the agent asks you to. If you have no necessary
+   question, ask nothing - just answer and wait."""
     
     def _format_policy(self) -> str:
         """Format conversation policy"""
@@ -131,7 +157,41 @@ class SimpleCustomerSimulator:
         if subsequent == 'ANSWER_REQUESTED_INFORMATION':
             policy_parts.append("Information Disclosure Strategy: Only provide customer info, delivery address, and other information when explicitly requested")
         
+        selection = self._format_selection_policy()
+        if selection:
+            policy_parts.append(selection)
+        
         return '\n'.join(policy_parts)
+    
+    def _format_selection_policy(self) -> str:
+        """Render DISCOVER_THEN_SELECT policy: only ask about a field when asked to choose it."""
+        policy = self.policy.get('configuration_selection') or {}
+        if not policy:
+            return ""
+        lines = [f"Configuration Selection Strategy: {policy.get('type')}"]
+        fields = policy.get('discovery_fields') or []
+        if fields:
+            lines.append(f"  - Fields you must discover: {', '.join(fields)}")
+        if policy.get('if_options_unknown'):
+            lines.append(f"  - When you do not know the options: {policy['if_options_unknown']}")
+        if policy.get('selection'):
+            lines.append(f"  - When you may actually select: {policy['selection']}")
+        if policy.get('if_target_not_offered'):
+            lines.append(f"  - If your wanted option is not offered: {policy['if_target_not_offered']}")
+        return '\n'.join(lines)
+    
+    def _format_option_knowledge(self) -> str:
+        """State which configuration fields this customer already knows up front."""
+        all_fields = ("product_model", "table_size", "timber", "timber_painting",
+                      "felt_color", "bracket", "top_profile")
+        known = [f for f in all_fields if f in self.initially_known_fields]
+        unknown = [f for f in all_fields if f not in self.initially_known_fields]
+        lines = [f"- You ALREADY know the options for: {', '.join(known) if known else 'nothing'}"]
+        lines.append(f"- You know NOTHING about the options for: {', '.join(unknown) if unknown else 'nothing'}")
+        if unknown:
+            lines.append("  You cannot name, guess or ask about any of these fields on your own. "
+                         "Wait until the agent asks you to choose that field, then ask what is available.")
+        return '\n'.join(lines)
     
     def __call__(self, public_history: list[ConversationMessage] | None = None) -> str:
         """Generate the next customer message
@@ -156,6 +216,8 @@ class SimpleCustomerSimulator:
                 "role": "user" if msg.role == 'assistant' else "assistant",
                 "content": msg.content
             })
+        
+        messages.append({"role": "system", "content": TURN_INSTRUCTION})
         
         response = chat(
             model=MODEL_NAME,

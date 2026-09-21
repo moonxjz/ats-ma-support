@@ -13,9 +13,17 @@ from entity.classification import ClassifierResult
 
 MODEL_NAME = "qwen3:8b"
 SYSTEM_PROMPT = """
-Classify the current ATS customer-support message into exactly one semantic
-category. Return only a JSON object matching the supplied schema: category,
-confidence (0 to 1), and a brief nonblank explanation.
+Classify the current ATS customer-support message into its semantic
+categories. Return only a JSON object matching the supplied schema: categories
+(an array of category strings), confidence (0 to 1), and a brief nonblank
+explanation.
+
+Prefer TWO categories: whenever the message shows any real second intent, emit
+two and return a one-element array only when there is no second intent at all.
+Only these pairs are supported, and the second element is always GENERAL_ENQUIRY:
+- WORKFLOW_RESPONSE + GENERAL_ENQUIRY
+- CREATE_ORDER + GENERAL_ENQUIRY
+Any other two-category output is invalid. Order within the array is irrelevant.
 
 Categories:
 - GENERAL_ENQUIRY: Information about ATS products, specifications, options,
@@ -36,6 +44,22 @@ Categories:
 - WORKFLOW_RESPONSE: A response to the currently active workflow's latest
   request/question, including supplied details, corrections and confirmation
   replies. This takes precedence when the message reasonably answers that request.
+
+Two-category policy (prefer two rather than dropping an enquiry):
+- WORKFLOW_RESPONSE + GENERAL_ENQUIRY: the message answers or advances the active
+  workflow's pending request AND mentions any product, specification, option,
+  service, delivery, policy or price question, even briefly or as an aside.
+- CREATE_ORDER + GENERAL_ENQUIRY: the message begins or continues order placement
+  AND mentions any such question.
+- A short aside ("by the way ...", "also ...", "one more thing ...") or a single
+  trailing question is enough to add GENERAL_ENQUIRY. Do not fold a real question
+  into the order/workflow intent just because it is brief or secondary.
+- When a message both answers the pending request and asks something, always emit
+  the pair instead of only the workflow or order category.
+- Do not fabricate an enquiry: if the message contains no question at all, return
+  a single category. Greetings and courtesy wording alone are still not an enquiry.
+- The second element is always GENERAL_ENQUIRY. Never pair two order/workflow
+  categories and never emit more than two categories.
 
 Context policy (identical across workflow-control architectures):
 current_message (Mt) is the customer message being classified. conversation_history
@@ -65,8 +89,11 @@ WORKFLOW_RESPONSE is unavailable: 'Yes, that's correct.' is an acknowledgement
 (CASUAL_CHAT), and 'Blue.' without a referent is UNKNOWN_OTHER_INQUIRY.
 Compare the subject and intent of the CURRENT message with the actual question:
 asking what timber finishes are available does not answer a request for cloth
-colour. That is GENERAL_ENQUIRY even while cloth colour is pending. Shared
-product vocabulary alone does not make a message a workflow response.
+colour. If that is all the message does, it is GENERAL_ENQUIRY even while cloth
+colour is pending. If it ALSO answers the pending request (for example
+'Blue, and what timber finishes are available?'), emit WORKFLOW_RESPONSE +
+GENERAL_ENQUIRY. Shared product vocabulary alone does not make a message a
+workflow response.
 
 Classify category only. Do not route messages, choose or progress workflow stages,
 mutate state, extract facts into state, validate configuration or room size,

@@ -68,7 +68,7 @@ class ClassifierBoundaryTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.respond(expected)
                 result = classify_message(message, history_for(state), state)
-                self.assertEqual(result.category.value, expected)
+                self.assertEqual(result.categories[0].value, expected)
                 self.assertEqual(self.payload()["current_message"], message)
                 self.assertEqual(self.payload()["conversation_history"], history_for(state))
 
@@ -182,7 +182,7 @@ class LiveClassifierTests(unittest.TestCase):
     def check_case(self, message, state, expected):
         before = deepcopy(state)
         result = classify_message(message, history_for(state), state)
-        self.assertEqual(result.category.value, expected, result.model_dump_json())
+        self.assertEqual(result.categories[0].value, expected, result.model_dump_json())
         self.assertEqual(state, before)
 
     def test_11_classification_scenarios(self):

@@ -242,7 +242,7 @@ class StaticKnowledgeTests(unittest.TestCase):
         session=ConversationSession(conversation_id='knowledge-test',workflow_state=state)
         before=session.model_dump_json()
         order=Mock(side_effect=AssertionError('Order Agent must not run'))
-        classifier=Mock(return_value=ClassifierResult(category=MessageCategory.GENERAL_ENQUIRY,confidence=1.0,explanation='public option enquiry'))
+        classifier=Mock(return_value=ClassifierResult(categories=[MessageCategory.GENERAL_ENQUIRY],confidence=1.0,explanation='public option enquiry'))
         knowledge=self.provide(); public=knowledge.answer_facts[0].text
         with patch('agents.support_agent.chat',return_value=completion(public)):
             result=process_customer_message(session,'What timber options are available?',support_knowledge=knowledge,
@@ -256,7 +256,7 @@ class StaticKnowledgeTests(unittest.TestCase):
     def test_support_failures_preserve_runtime_semantics(self):
         session=ConversationSession(conversation_id='failure-test')
         before=session.model_dump_json()
-        classifier=Mock(return_value=ClassifierResult(category=MessageCategory.GENERAL_ENQUIRY,confidence=1.0,explanation='enquiry'))
+        classifier=Mock(return_value=ClassifierResult(categories=[MessageCategory.GENERAL_ENQUIRY],confidence=1.0,explanation='enquiry'))
         for failure in [ConnectionError('generation failed'),completion('There are 999 timber options.'),
                         SimpleNamespace(message=SimpleNamespace(content='not JSON'))]:
             kwargs={'side_effect':failure} if isinstance(failure,Exception) else {'return_value':failure}

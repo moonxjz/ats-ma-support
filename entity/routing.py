@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from entity.business_result import BusinessResult
 from entity.classification import MessageCategory
 from entity.order_creation_state import OrderCreationState
-from entity.support import SupportActionResult
+from entity.support import CustomerResponse, SupportActionResult
 
 
 class TargetAgent(str, Enum):
@@ -67,6 +67,13 @@ class RootExecutionResult(BaseModel):
     state: OrderCreationState | None
     business_result: BusinessResult | None
     support_result: SupportActionResult | None = None
+    # Text-only companion reply from a second executed category. The single
+    # outcome contract above is unchanged: exactly one of business_result and
+    # support_result describes the primary route. This field only carries the
+    # already-composed customer wording of a secondary route (currently a
+    # GENERAL_ENQUIRY answered alongside an order/workflow turn) so callers can
+    # concatenate the two replies into one customer-facing message.
+    additional_response: CustomerResponse | None = None
 
 
     @model_validator(mode="after")
