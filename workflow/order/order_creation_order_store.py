@@ -130,3 +130,8 @@ def create_order(
                 raise OrderStoreIntegrityError("Committed order record does not match requested record.")
             return OrderCommitResult(record=stored_record, created=True)
     raise OrderStoreIntegrityError("Committed order record was not found after write.")
+
+
+def load_orders(store_path: Path = DEFAULT_ORDER_STORE_PATH) -> list[OrderCreationRecord]:
+    """Public read of every persisted order record from the store."""
+    return _load_store(Path(store_path))

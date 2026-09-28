@@ -1,7 +1,10 @@
 """CLI adapter for the in-memory ATS conversation runtime."""
 
 import argparse
+import json
 import logging
+import re
+from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
 from uuid import uuid4
@@ -9,11 +12,58 @@ from uuid import uuid4
 from entity.conversation import ConversationSession
 from workflow.conversation_runtime import TurnFailure, process_customer_message, retry_pending_response
 from agents.order_agent import process_order_creation_message
-from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH
+from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH, load_orders
 from evaluation.simulator import create_simple_simulator
 from tools.knowledge_tool import load_product_prices_as_knowledge
 
 logger = logging.getLogger("ats_support_cli")
+
+
+EXPERIMENT_LOG_DIR = Path("experiment_logs")
+
+
+def save_experiment_log(*, session, scenario_id, order_store_path, final_status, final_reason):
+    """Persist the final order(s) and full dialogue history for a single run.
+
+    Each run is saved independently under experiment_logs/<scenario>_run<NNN>.json,
+    where <NNN> is an incrementing per-scenario run index.
+    """
+    EXPERIMENT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    run_pattern = re.compile(rf"^{re.escape(scenario_id)}_run(\d+)\.json$")
+    max_index = 0
+    for existing in EXPERIMENT_LOG_DIR.glob(f"{scenario_id}_run*.json"):
+        match = run_pattern.match(existing.name)
+        if match:
+            max_index = max(max_index, int(match.group(1)))
+    run_index = max_index + 1
+    log_path = EXPERIMENT_LOG_DIR / f"{scenario_id}_run{run_index:03d}.json"
+
+    history = [message.model_dump() for message in session.history]
+
+    orders = []
+    try:
+        for record in load_orders(order_store_path):
+            if record.conversation_id == session.conversation_id:
+                orders.append(json.loads(record.model_dump_json()))
+    except Exception as exc:  # noqa: BLE001 - read failure must not block shutdown
+        logger.warning("Could not read order store for experiment log: %s", exc)
+
+    payload = {
+        "scenario_id": scenario_id,
+        "run_index": run_index,
+        "conversation_id": session.conversation_id,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+        "final_status": final_status,
+        "final_reason": final_reason,
+        "orders": orders,
+        "history": history,
+    }
+    log_path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    logger.info("Experiment log saved to %s", log_path)
+    print(f"\nExperiment log saved: {log_path} (scenario={scenario_id}, run={run_index})")
 
 
 
@@ -46,6 +96,8 @@ def main():
     logger.info('Session initialised: %s', session.support_ticket_id)
     processor = partial(process_order_creation_message, order_store_path=args.order_store_path)
     pending = None
+    final_status = "UNRESOLVED"
+    final_reason = None
     simulator = create_simple_simulator(f"evaluation/scenarios/{args.scenario_id}.json")
     logger.info('Scenario Id is: %s', args.scenario_id)
     print(f'Conversation / support ticket: {session.support_ticket_id}')
@@ -61,10 +113,14 @@ def main():
                 message = input(f"\n Your message {turn}: \n ")
         except (EOFError, KeyboardInterrupt):
             logger.info('Input stream ended (EOF / KeyboardInterrupt)')
+            final_status = "INTERRUPTED"
+            final_reason = "EOF / KeyboardInterrupt"
             print()
             break
         if message.strip() == '/quit':
             logger.info('User issued /quit command')
+            final_status = "INTERRUPTED"
+            final_reason = "user issued /quit"
             break
         if not message.strip():
             logger.debug('Empty message, skipping')
@@ -109,11 +165,13 @@ def main():
         outcome = result.execution.business_result or result.execution.support_result
         if outcome is not None and hasattr(outcome, 'result_status'):
             if outcome.result_status.value in ('SUCCESS', 'FAILURE', 'CANCELLED'):
+                final_status = outcome.result_status.value
+                final_reason = outcome.reason.value if hasattr(outcome, 'reason') else None
                 logger.info('Conversation ended – status=%s reason=%s',
-                            outcome.result_status.value,
-                            outcome.reason.value if hasattr(outcome, 'reason') else 'N/A')
+                            final_status,
+                            final_reason or 'N/A')
                 print(f"\n{'='*60}")
-                print(f"Conversation ended with status: {outcome.result_status.value}, because: {outcome.reason.value if hasattr(outcome, 'reason') else 'N/A'}")
+                print(f"Conversation ended with status: {final_status}, because: {final_reason or 'N/A'}")
                 print(f"{'='*60}")
                 break
         logger.info('Turn %d completed – no terminal outcome', turn)
@@ -136,6 +194,13 @@ def main():
             #     print('Workflow:', session.workflow_state.current_stage.value, session.workflow_state.status.value)
 
     logger.info('Progress completed')
+    save_experiment_log(
+        session=session,
+        scenario_id=args.scenario_id,
+        order_store_path=args.order_store_path,
+        final_status=final_status,
+        final_reason=final_reason,
+    )
         
 
 
