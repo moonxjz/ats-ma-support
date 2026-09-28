@@ -128,17 +128,28 @@ def run_experiment(
                 })
                 continue
 
-            try:
-                res_i1 = evaluate_i1_file(log_path).to_dict()
-                res_i2 = evaluate_i2_file(log_path, room_extractor=room_extractor).to_dict()
-                res_i4 = evaluate_i4_file(log_path, scenarios_dir=scenarios_dir).to_dict()
-                res_i5 = evaluate_i5_file(log_path).to_dict()
-            except Exception as exc:  # noqa: BLE001
-                print(f"  ! metrics failed for {log_path.name}: {exc}")
-                res_i1 = res_i2 = res_i4 = res_i5 = {
-                    "status": "INCONCLUSIVE", "reason": f"metric_error: {exc}"}
-
-            metric_results = {"I1": res_i1, "I2": res_i2, "I4": res_i4, "I5": res_i5}
+            # Evaluate each metric independently. A failure (or an INCONCLUSIVE
+            # result) in one metric must NOT stop the evaluation of the subsequent
+            # ones, so every call is wrapped in its own try/except instead of a
+            # single shared block.
+            metric_evaluators = {
+                "I1": lambda: evaluate_i1_file(log_path).to_dict(),
+                "I2": lambda: evaluate_i2_file(log_path, room_extractor=room_extractor).to_dict(),
+                "I4": lambda: evaluate_i4_file(log_path, scenarios_dir=scenarios_dir).to_dict(),
+                "I5": lambda: evaluate_i5_file(log_path).to_dict(),
+            }
+            metric_results: dict[str, dict] = {}
+            for name, evaluate in metric_evaluators.items():
+                try:
+                    metric_results[name] = evaluate()
+                except Exception as exc:  # noqa: BLE001 - one bad metric must not skip the rest
+                    print(f"  ! metric {name} failed for {log_path.name}: {exc}")
+                    metric_results[name] = {
+                        "status": "INCONCLUSIVE", "reason": f"metric_error: {exc}"}
+            res_i1 = metric_results["I1"]
+            res_i2 = metric_results["I2"]
+            res_i4 = metric_results["I4"]
+            res_i5 = metric_results["I5"]
             run_final = _aggregate_run_status(metric_results)
             run_records.append({
                 "scenario_id": sid,

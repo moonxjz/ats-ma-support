@@ -102,14 +102,17 @@ def evaluate_i1_run(run: dict) -> I1Evaluation:
     orders_count = len(orders)
 
     if orders_count == 0:
-        # No committed order means required information was not completed into an
-        # order; I1 cannot be satisfied.
+        # No committed order means there is no authoritative snapshot to judge
+        # required-information completeness against. That is not a proven failure
+        # (the conversation may have legitimately ended without an order, e.g. the
+        # customer abandoned at final confirmation), so I1 is INCONCLUSIVE rather
+        # than FAIL: the metric cannot be judged either way.
         return I1Evaluation(
             scenario_id=scenario_id,
             run_index=run_index,
             conversation_id=conversation_id,
-            status="FAIL",
-            reason="no_order_created",
+            status="INCONCLUSIVE",
+            reason="no_committed_order_cannot_judge",
             orders_count=orders_count,
             final_status=final_status,
             missing_fields=[],
