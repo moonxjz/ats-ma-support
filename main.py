@@ -64,50 +64,35 @@ def save_experiment_log(*, session, scenario_id, order_store_path, final_status,
     )
     logger.info("Experiment log saved to %s", log_path)
     print(f"\nExperiment log saved: {log_path} (scenario={scenario_id}, run={run_index})")
+    return log_path
 
 
 
-def main():
-    parser = argparse.ArgumentParser(description="ATS customer-support CLI")
-    parser.add_argument('--conversation-id', default=None)
-    parser.add_argument('--order-store-path', type=Path, default=DEFAULT_ORDER_STORE_PATH)
-    parser.add_argument('--debug', action='store_true')
-    parser.add_argument('--manual', action='store_true')
-    parser.add_argument('--scenario-id', default='S01')
-    parser.add_argument('--log-file', type=Path, default=None,
-                        help='Path to log file (default: logs/<scenario-id>.log)')
-    args = parser.parse_args()
+def run_scenario_conversation(*, scenario_id, order_store_path=DEFAULT_ORDER_STORE_PATH,
+                              conversation_id=None, max_turns=100, debug=False,
+                              manual=False, verbose=True):
+    """Run one full scenario conversation and persist the run log.
 
-    log_level = getattr(logging, 'INFO')
-    log_file = Path('logs') / (args.log_file or f'{args.scenario_id}.log')
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
-        datefmt='%H:%M:%S',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            # logging.StreamHandler(),
-        ],
-    )
-
-    session = ConversationSession(conversation_id=args.conversation_id or 'SUP-' + uuid4().hex[:12].upper())
+    When ``manual`` is False the customer is driven by the simulator; otherwise it
+    reads from stdin. Returns the path to the written ``experiment_logs`` run JSON.
+    """
+    session = ConversationSession(conversation_id=conversation_id or 'SUP-' + uuid4().hex[:12].upper())
+    if verbose:
+        print(f'Conversation / support ticket: {session.support_ticket_id}')
     logger.info('Session initialised: %s', session.support_ticket_id)
-    processor = partial(process_order_creation_message, order_store_path=args.order_store_path)
+    processor = partial(process_order_creation_message, order_store_path=order_store_path)
+    support_knowledge = load_product_prices_as_knowledge()
     pending = None
     final_status = "UNRESOLVED"
     final_reason = None
-    simulator = create_simple_simulator(f"evaluation/scenarios/{args.scenario_id}.json")
-    logger.info('Scenario Id is: %s', args.scenario_id)
-    print(f'Conversation / support ticket: {session.support_ticket_id}')
-    logger.info(f'Conversation / support ticket: {session.support_ticket_id}')
+    simulator = create_simple_simulator(f"evaluation/scenarios/{scenario_id}.json")
+    logger.info('Scenario Id is: %s', scenario_id)
     turn = 0
-    while True:
+    while turn < max_turns:
         turn += 1
         logger.info('--- Turn %d start ---', turn)
         try:
-            if not args.manual:
+            if not manual:
                 message = simulator(session.history)
             else:
                 message = input(f"\n Your message {turn}: \n ")
@@ -115,7 +100,8 @@ def main():
             logger.info('Input stream ended (EOF / KeyboardInterrupt)')
             final_status = "INTERRUPTED"
             final_reason = "EOF / KeyboardInterrupt"
-            print()
+            if verbose:
+                print()
             break
         if message.strip() == '/quit':
             logger.info('User issued /quit command')
@@ -133,18 +119,21 @@ def main():
             logger.warning('Pending response unresolved; user must /retry before new input')
             print('Diagnostic: resolve the pending response with /retry before entering a new turn.')
             continue
-        print(f"\n{'='*60}")
-        print(f"[Customer Turn {turn}]")
-        print(f"{'='*60}")
-        print(message)
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"[Customer Turn {turn}]")
+            print(f"{'='*60}")
+            print(message)
         logger.info('Customer message (turn %d): %s', turn, message)
-        if args.debug:
+        if debug:
             result = (retry_pending_response(session, pending) if pending else
-                                process_customer_message(session, message, order_creation_processor=processor, support_knowledge=load_product_prices_as_knowledge()))
+                      process_customer_message(session, message, order_creation_processor=processor,
+                                              support_knowledge=support_knowledge))
         else:
             try:
                 result = (retry_pending_response(session, pending) if pending else
-                            process_customer_message(session, message, order_creation_processor=processor))
+                          process_customer_message(session, message, order_creation_processor=processor,
+                                                  support_knowledge=support_knowledge))
             except TurnFailure as exc:
                 pending = exc.pending_turn
                 logger.error('TurnFailure at turn %d (phase=%s): %s', turn, exc.phase, exc)
@@ -156,52 +145,94 @@ def main():
                 continue
         session = result.session
         pending = None
-        logger.info('Agent response (turn %d): %s', turn, result.customer_response.text)
-        print(f"\n{'='*60}")
-        print(f"[Agent Turn {turn}]")
-        print(f"{'='*60}")
-        print(result.customer_response.text)
 
+        # Detailed per-turn trace: classifier, order agent, support agent, workflow.
+        execution = getattr(result, "execution", None)
+        if execution is not None:
+            logger.info('Classification: %s', result.classification.model_dump_json())
+            logger.info('Routing: %s', execution.routing.model_dump_json())
+            if execution.business_result is not None:
+                logger.info('Order agent outcome: %s', execution.business_result.model_dump_json())
+            if execution.support_result is not None:
+                logger.info('Support agent outcome: %s', execution.support_result.model_dump_json())
+        if session.workflow_state is not None:
+            logger.info('Workflow: stage=%s status=%s',
+                        session.workflow_state.current_stage.value,
+                        session.workflow_state.status.value)
+        if debug:
+            print(f"\n[Trace turn {turn}] classification: {result.classification.model_dump_json()}")
+            print(f"[Trace turn {turn}] routing: {execution.routing.model_dump_json()}")
+            if execution is not None and execution.business_result is not None:
+                print(f"[Trace turn {turn}] order_agent: {execution.business_result.model_dump_json()}")
+            if execution is not None and execution.support_result is not None:
+                print(f"[Trace turn {turn}] support_agent: {execution.support_result.model_dump_json()}")
+            if session.workflow_state is not None:
+                print(f"[Trace turn {turn}] workflow: stage={session.workflow_state.current_stage.value} "
+                      f"status={session.workflow_state.status.value}")
+
+        if verbose:
+            logger.info('Agent response (turn %d): %s', turn, result.customer_response.text)
+            print(f"\n{'='*60}")
+            print(f"[Agent Turn {turn}]")
+            print(f"{'='*60}")
+            print(result.customer_response.text)
         outcome = result.execution.business_result or result.execution.support_result
         if outcome is not None and hasattr(outcome, 'result_status'):
             if outcome.result_status.value in ('SUCCESS', 'FAILURE', 'CANCELLED'):
                 final_status = outcome.result_status.value
                 final_reason = outcome.reason.value if hasattr(outcome, 'reason') else None
-                logger.info('Conversation ended – status=%s reason=%s',
-                            final_status,
-                            final_reason or 'N/A')
-                print(f"\n{'='*60}")
-                print(f"Conversation ended with status: {final_status}, because: {final_reason or 'N/A'}")
-                print(f"{'='*60}")
+                logger.info('Conversation ended – status=%s reason=%s', final_status, final_reason or 'N/A')
+                if verbose:
+                    print(f"\n{'='*60}")
+                    print(f"Conversation ended with status: {final_status}, because: {final_reason or 'N/A'}")
+                    print(f"{'='*60}")
                 break
         logger.info('Turn %d completed – no terminal outcome', turn)
-        if args.debug:
-            logger.info('Classification: %s', result.classification.model_dump_json())
-            logger.info('Routing: %s', result.execution.routing.model_dump_json())
-            outcome = result.execution.business_result or result.execution.support_result
-            if outcome is not None:
-                logger.info('Outcome: %s', outcome.model_dump_json())
-            if session.workflow_state is not None:
-                logger.info('Workflow: stage=%s status=%s',
-                             session.workflow_state.current_stage.value,
-                             session.workflow_state.status.value)
-            # print('Classification:', result.classification.model_dump_json())
-            # print('Routing:', result.execution.routing.model_dump_json())
-            # outcome = result.execution.business_result or result.execution.support_result
-            # if outcome is not None:
-            #     print('Outcome:', outcome.model_dump_json())
-            # if session.workflow_state is not None:
-            #     print('Workflow:', session.workflow_state.current_stage.value, session.workflow_state.status.value)
-
     logger.info('Progress completed')
-    save_experiment_log(
+    return save_experiment_log(
         session=session,
-        scenario_id=args.scenario_id,
-        order_store_path=args.order_store_path,
+        scenario_id=scenario_id,
+        order_store_path=order_store_path,
         final_status=final_status,
         final_reason=final_reason,
     )
-        
+
+
+def main():
+    parser = argparse.ArgumentParser(description="ATS customer-support CLI")
+    parser.add_argument('--conversation-id', default=None)
+    parser.add_argument('--order-store-path', type=Path, default=DEFAULT_ORDER_STORE_PATH)
+    parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--manual', action='store_true')
+    parser.add_argument('--scenario-id', default='S01')
+    parser.add_argument('--log-file', type=Path, default=None,
+                        help='Path to log file (default: logs/<scenario-id>.log)')
+    parser.add_argument('--max-turns', type=int, default=100)
+    args = parser.parse_args()
+
+    log_level = getattr(logging, 'INFO')
+    log_file = Path('logs') / (args.log_file or f'{args.scenario_id}.log')
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
+        datefmt='%H:%M:%S',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            # logging.StreamHandler(),
+        ],
+    )
+
+    run_scenario_conversation(
+        scenario_id=args.scenario_id,
+        order_store_path=args.order_store_path,
+        conversation_id=args.conversation_id,
+        max_turns=args.max_turns,
+        debug=args.debug,
+        manual=args.manual,
+        verbose=True,
+    )
 
 
 if __name__ == '__main__':
