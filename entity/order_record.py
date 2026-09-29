@@ -29,7 +29,7 @@ class OrderCreationRecord(BaseModel):
     source_workflow_id: str
     conversation_id: str
     created_at: str
-    order_status: Literal["CONFIRMED"]
+    order_status: Literal["CONFIRMED", "CANCELLED"]
     order: FinalOrderSnapshot
 
     @field_validator("order_id")

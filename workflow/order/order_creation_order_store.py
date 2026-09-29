@@ -22,6 +22,7 @@ from entity.order_record import ORDER_ID_PATTERN, OrderCreationRecord
 
 DEFAULT_ORDER_STORE_PATH = Path(__file__).resolve().parents[2] / "data" / "orders.json"
 ORDER_STATUS_CONFIRMED = "CONFIRMED"
+ORDER_STATUS_CANCELLED = "CANCELLED"
 
 class OrderStoreIntegrityError(RuntimeError):
     """Raised when persisted order data violates the MVP store contract."""
@@ -135,3 +136,37 @@ def create_order(
 def load_orders(store_path: Path = DEFAULT_ORDER_STORE_PATH) -> list[OrderCreationRecord]:
     """Public read of every persisted order record from the store."""
     return _load_store(Path(store_path))
+
+
+def cancel_order(
+    *,
+    workflow_id: str,
+    store_path: Path = DEFAULT_ORDER_STORE_PATH,
+) -> OrderCommitResult:
+    """Mark the order committed under ``workflow_id`` as CANCELLED.
+
+    Idempotent: cancelling an already-cancelled order returns that record. Raises
+    ``OrderStoreIntegrityError`` when no order exists for the workflow id (callers
+    should only invoke this after an order was actually created).
+    """
+    if not isinstance(workflow_id, str) or not workflow_id.strip():
+        raise ValueError("workflow_id must be a non-blank string.")
+    records = _load_store(Path(store_path))
+    for index, record in enumerate(records):
+        if record.source_workflow_id == workflow_id:
+            if record.order_status == ORDER_STATUS_CANCELLED:
+                return OrderCommitResult(record=record, created=False)
+            cancelled_record = OrderCreationRecord(
+                order_id=record.order_id,
+                source_workflow_id=record.source_workflow_id,
+                conversation_id=record.conversation_id,
+                created_at=record.created_at,
+                order_status=ORDER_STATUS_CANCELLED,
+                order=record.order,
+            )
+            records[index] = cancelled_record
+            _atomic_write_store(Path(store_path), records)
+            return OrderCommitResult(record=cancelled_record, created=False)
+    raise OrderStoreIntegrityError(
+        "No order found for the given workflow_id to cancel."
+    )

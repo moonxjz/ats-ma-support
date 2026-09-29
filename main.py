@@ -15,6 +15,7 @@ from agents.order_agent import process_order_creation_message
 from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH, load_orders
 from evaluation.simulator import create_simple_simulator
 from tools.knowledge_tool import load_product_prices_as_knowledge
+from agents.pure_agent import PureAgent
 
 logger = logging.getLogger("ats_support_cli")
 
@@ -198,6 +199,62 @@ def run_scenario_conversation(*, scenario_id, order_store_path=DEFAULT_ORDER_STO
     )
 
 
+def run_scenario_conversation_pure(*, scenario_id, order_store_path=DEFAULT_ORDER_STORE_PATH,
+                                    conversation_id=None, max_turns=100, debug=False,
+                                    manual=False, verbose=True):
+    """Run one full scenario conversation with the pure (single LLM) agent.
+
+    Mirrors the legacy runner but routes every turn through ``PureAgent`` instead
+    of the classifier/router/order-agent/support-agent pipeline.
+    """
+    session = ConversationSession(conversation_id=conversation_id or 'SUP-' + uuid4().hex[:12].upper())
+    agent = PureAgent(conversation_id=session.conversation_id, order_store_path=order_store_path)
+    simulator = create_simple_simulator(f"evaluation/scenarios/{scenario_id}.json")
+    final_status = "UNRESOLVED"
+    final_reason = None
+    turn = 0
+    while turn < max_turns:
+        turn += 1
+        try:
+            if not manual:
+                public_history = [m for m in agent.history if m.role != "system"]
+                message = simulator(public_history)
+            else:
+                message = input(f"\n Your message {turn}: \n ")
+        except (EOFError, KeyboardInterrupt):
+            final_status, final_reason = "INTERRUPTED", "EOF / KeyboardInterrupt"
+            break
+        if message.strip() == '/quit':
+            final_status, final_reason = "INTERRUPTED", "user issued /quit"
+            break
+        if not message.strip():
+            continue
+        if verbose:
+            print(f"\n{'='*60}\n[Customer Turn {turn}]\n{'='*60}\n{message}")
+        try:
+            response = agent.process(message)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Diagnostic: agent failure: {exc}")
+            final_status, final_reason = "FAILURE", str(exc)
+            break
+        if verbose:
+            print(f"\n{'='*60}\n[Agent Turn {turn}]\n{'='*60}\n{response}")
+        if agent.cancelled:
+            final_status, final_reason = "CANCELLED", "CUSTOMER_CANCELLED"
+            break
+        if agent.finished or agent.created_order_id is not None:
+            final_status, final_reason = "SUCCESS", "ORDER_CREATED"
+            break
+    session = ConversationSession(conversation_id=session.conversation_id, history=agent.history)
+    return save_experiment_log(
+        session=session,
+        scenario_id=scenario_id,
+        order_store_path=order_store_path,
+        final_status=final_status,
+        final_reason=final_reason,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="ATS customer-support CLI")
     parser.add_argument('--conversation-id', default=None)
@@ -208,6 +265,10 @@ def main():
     parser.add_argument('--log-file', type=Path, default=None,
                         help='Path to log file (default: logs/<scenario-id>.log)')
     parser.add_argument('--max-turns', type=int, default=100)
+    parser.add_argument('--pure', dest='pure', action='store_true', default=True,
+                        help='Use the pure single-LLM agent (default).')
+    parser.add_argument('--no-pure', dest='pure', action='store_false',
+                        help='Use the legacy classifier/router/order-agent pipeline.')
     args = parser.parse_args()
 
     log_level = getattr(logging, 'INFO')
@@ -223,6 +284,18 @@ def main():
             # logging.StreamHandler(),
         ],
     )
+
+    if args.pure:
+        run_scenario_conversation_pure(
+            scenario_id=args.scenario_id,
+            order_store_path=args.order_store_path,
+            conversation_id=args.conversation_id,
+            max_turns=args.max_turns,
+            debug=args.debug,
+            manual=args.manual,
+            verbose=True,
+        )
+        return
 
     run_scenario_conversation(
         scenario_id=args.scenario_id,
