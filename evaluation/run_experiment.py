@@ -15,6 +15,8 @@ Usage:
     python -m evaluation.run_experiment --runs-per-scenario 3
     python -m evaluation.run_experiment --runs-per-scenario 2 --scenario-id S01 S02
     python -m evaluation.run_experiment --runs-per-scenario 5 --no-llm
+    python -m evaluation.run_experiment --runs-per-scenario 3 --agent pure
+    python -m evaluation.run_experiment --runs-per-scenario 3 --agent legacy pure
 """
 
 from __future__ import annotations
@@ -37,6 +39,19 @@ DEFAULT_ORDER_STORE_PATH = Path("data/orders.json")
 METRIC_NAMES = ("I1", "I2", "I4", "I5")
 
 STATUS_RANK = {"PASS": 0, "INCONCLUSIVE": 1, "FAIL": 2}
+
+# Supported agents. "legacy" is the classifier/router/order-agent/support-agent
+# pipeline; "pure" is the single-LLM PureAgent.
+AGENT_MODES = ("legacy", "pure")
+
+
+def _get_driver(agent_mode: str):
+    """Return the conversation runner for the requested agent mode."""
+    if agent_mode == "pure":
+        from main import run_scenario_conversation_pure
+        return run_scenario_conversation_pure
+    from main import run_scenario_conversation
+    return run_scenario_conversation
 
 
 def _aggregate_run_status(metric_results: dict[str, dict]) -> dict[str, Any]:
@@ -70,6 +85,7 @@ def run_experiment(
     max_turns: int = 100,
     scenario_ids: list[str] | None = None,
     run_driver: Any = None,
+    agent_modes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run the experiment and write the aggregated results file. Returns the result dict."""
     scenarios_dir = Path(scenarios_dir)
@@ -94,81 +110,96 @@ def run_experiment(
         except Exception as exc:  # noqa: BLE001 - degrade gracefully
             print(f"Warning: LLM room extractor unavailable ({exc}); I2 will be INCONCLUSIVE.")
 
-    # Imported lazily: main pulls in runtime deps not needed for arg parsing.
-    # A driver can be injected (e.g. for testing) instead of the real runtime.
-    if run_driver is None:
-        from main import run_scenario_conversation as run_driver
+    # Default to testing BOTH agents so the results are directly comparable.
+    effective_agent_modes = list(agent_modes) if agent_modes else list(AGENT_MODES)
+
+    # Driver selection. By default each requested agent mode runs through its own
+    # runner. An injected ``run_driver`` (used by tests) overrides everything and
+    # is run once under the "legacy" label.
+    if run_driver is not None:
+        drivers = {"legacy": run_driver}
+        effective_agent_modes = ["legacy"]
+    else:
+        drivers = {mode: _get_driver(mode) for mode in effective_agent_modes}
+
+    def _execute_one(driver, sid, rep, agent_mode):
+        print(f"[{datetime.now():%H:%M:%S}] Running scenario {sid} "
+              f"(agent={agent_mode}) rep {rep}/{runs_per_scenario}")
+        try:
+            log_path = driver(
+                scenario_id=sid,
+                order_store_path=Path(order_store_path),
+                max_turns=max_turns,
+                debug=False,
+                manual=False,
+                verbose=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad run must not abort the batch
+            print(f"  ! scenario {sid} ({agent_mode}) rep {rep} crashed: {exc}")
+            run_records.append({
+                "scenario_id": sid,
+                "agent_mode": agent_mode,
+                "run_index": None,
+                "conversation_id": None,
+                "final_status": "ERROR",
+                "metrics": {name: {"status": "INCONCLUSIVE",
+                                   "reason": f"run_crashed: {exc}"} for name in METRIC_NAMES},
+                "run_final_status": "INCONCLUSIVE",
+                "run_final_detail": "run crashed before completion",
+            })
+            return
+
+        # Evaluate each metric independently. A failure (or an INCONCLUSIVE
+        # result) in one metric must NOT stop the evaluation of the subsequent
+        # ones, so every call is wrapped in its own try/except instead of a
+        # single shared block.
+        metric_evaluators = {
+            "I1": lambda: evaluate_i1_file(log_path).to_dict(),
+            "I2": lambda: evaluate_i2_file(log_path, room_extractor=room_extractor).to_dict(),
+            "I4": lambda: evaluate_i4_file(log_path, scenarios_dir=scenarios_dir).to_dict(),
+            "I5": lambda: evaluate_i5_file(log_path).to_dict(),
+        }
+        metric_results: dict[str, dict] = {}
+        for name, evaluate in metric_evaluators.items():
+            try:
+                metric_results[name] = evaluate()
+            except Exception as exc:  # noqa: BLE001 - one bad metric must not skip the rest
+                print(f"  ! metric {name} failed for {log_path.name}: {exc}")
+                metric_results[name] = {
+                    "status": "INCONCLUSIVE", "reason": f"metric_error: {exc}"}
+        res_i1 = metric_results["I1"]
+        res_i2 = metric_results["I2"]
+        res_i4 = metric_results["I4"]
+        res_i5 = metric_results["I5"]
+        run_final = _aggregate_run_status(metric_results)
+        run_records.append({
+            "scenario_id": sid,
+            "agent_mode": agent_mode,
+            "run_index": res_i1.get("run_index"),
+            "conversation_id": res_i1.get("conversation_id"),
+            "final_status": res_i1.get("final_status"),
+            "metrics": metric_results,
+            "run_final_status": run_final["status"],
+            "run_final_detail": run_final["detail"],
+        })
+        print(f"  -> {log_path.name}: run_final={run_final['status']} "
+              f"(I1={res_i1['status']} I2={res_i2['status']} "
+              f"I4={res_i4['status']} I5={res_i5['status']})")
 
     run_records: list[dict[str, Any]] = []
     for sf in scenario_files:
         sid = sf.stem
-        for rep in range(1, runs_per_scenario + 1):
-            print(f"[{datetime.now():%H:%M:%S}] Running scenario {sid} "
-                  f"rep {rep}/{runs_per_scenario}")
-            try:
-                log_path = run_driver(
-                    scenario_id=sid,
-                    order_store_path=Path(order_store_path),
-                    max_turns=max_turns,
-                    debug=False,
-                    manual=False,
-                    verbose=False,
-                )
-            except Exception as exc:  # noqa: BLE001 - one bad run must not abort the batch
-                print(f"  ! scenario {sid} rep {rep} crashed: {exc}")
-                run_records.append({
-                    "scenario_id": sid,
-                    "run_index": None,
-                    "conversation_id": None,
-                    "final_status": "ERROR",
-                    "metrics": {name: {"status": "INCONCLUSIVE",
-                                       "reason": f"run_crashed: {exc}"} for name in METRIC_NAMES},
-                    "run_final_status": "INCONCLUSIVE",
-                    "run_final_detail": "run crashed before completion",
-                })
-                continue
-
-            # Evaluate each metric independently. A failure (or an INCONCLUSIVE
-            # result) in one metric must NOT stop the evaluation of the subsequent
-            # ones, so every call is wrapped in its own try/except instead of a
-            # single shared block.
-            metric_evaluators = {
-                "I1": lambda: evaluate_i1_file(log_path).to_dict(),
-                "I2": lambda: evaluate_i2_file(log_path, room_extractor=room_extractor).to_dict(),
-                "I4": lambda: evaluate_i4_file(log_path, scenarios_dir=scenarios_dir).to_dict(),
-                "I5": lambda: evaluate_i5_file(log_path).to_dict(),
-            }
-            metric_results: dict[str, dict] = {}
-            for name, evaluate in metric_evaluators.items():
-                try:
-                    metric_results[name] = evaluate()
-                except Exception as exc:  # noqa: BLE001 - one bad metric must not skip the rest
-                    print(f"  ! metric {name} failed for {log_path.name}: {exc}")
-                    metric_results[name] = {
-                        "status": "INCONCLUSIVE", "reason": f"metric_error: {exc}"}
-            res_i1 = metric_results["I1"]
-            res_i2 = metric_results["I2"]
-            res_i4 = metric_results["I4"]
-            res_i5 = metric_results["I5"]
-            run_final = _aggregate_run_status(metric_results)
-            run_records.append({
-                "scenario_id": sid,
-                "run_index": res_i1.get("run_index"),
-                "conversation_id": res_i1.get("conversation_id"),
-                "final_status": res_i1.get("final_status"),
-                "metrics": metric_results,
-                "run_final_status": run_final["status"],
-                "run_final_detail": run_final["detail"],
-            })
-            print(f"  -> {log_path.name}: run_final={run_final['status']} "
-                  f"(I1={res_i1['status']} I2={res_i2['status']} "
-                  f"I4={res_i4['status']} I5={res_i5['status']})")
+        for agent_mode in effective_agent_modes:
+            driver = drivers[agent_mode]
+            for rep in range(1, runs_per_scenario + 1):
+                _execute_one(driver, sid, rep, agent_mode)
 
     summary = _build_summary(run_records)
     output: dict[str, Any] = {
         "params": {
             "runs_per_scenario": runs_per_scenario,
             "scenarios": [sf.stem for sf in scenario_files],
+            "agent_modes": effective_agent_modes,
             "order_store_path": str(order_store_path),
             "use_llm": use_llm,
             "max_turns": max_turns,
@@ -189,7 +220,7 @@ def _empty_metric_counts() -> dict[str, dict[str, int]]:
     return {name: {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0} for name in METRIC_NAMES}
 
 
-def _build_summary(run_records: list[dict[str, Any]]) -> dict[str, Any]:
+def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
     per_scenario: dict[str, Any] = {}
     overall_metrics = _empty_metric_counts()
     overall_runs = {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0}
@@ -224,6 +255,17 @@ def _build_summary(run_records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _build_summary(run_records: list[dict[str, Any]]) -> dict[str, Any]:
+    base = _summarize_records(run_records)
+    # Break the aggregate down per agent mode so legacy vs pure are comparable.
+    by_agent: dict[str, Any] = {}
+    for mode in sorted({r["agent_mode"] for r in run_records}):
+        by_agent[mode] = _summarize_records(
+            [r for r in run_records if r["agent_mode"] == mode])
+    base["by_agent"] = by_agent
+    return base
+
+
 def _print_summary(summary: dict[str, Any]) -> None:
     overall = summary["overall"]
     print("\n=== Overall summary ===")
@@ -235,6 +277,12 @@ def _print_summary(summary: dict[str, Any]) -> None:
         print(f"  {sid}: runs={ps['runs']} run_status={ps['run_status']}")
         for name in METRIC_NAMES:
             print(f"      {name}: {ps['metrics'][name]}")
+
+    print("\nBy agent mode:")
+    for mode, sm in summary.get("by_agent", {}).items():
+        print(f"  [{mode}] runs={sm['overall']['runs']} run_status={sm['overall']['run_status']}")
+        for name in METRIC_NAMES:
+            print(f"      {name}: {sm['overall']['metrics'][name]}")
 
 
 def main() -> None:
@@ -248,6 +296,8 @@ def main() -> None:
     parser.add_argument("--order-store-path", type=Path, default=DEFAULT_ORDER_STORE_PATH)
     parser.add_argument("--max-turns", type=int, default=100,
                         help="Max conversation turns per run before force-stop.")
+    parser.add_argument("--agent", nargs="*", choices=list(AGENT_MODES), default=list(AGENT_MODES),
+                        help="Which agent(s) to test: legacy and/or pure (default: both).")
     parser.add_argument("--no-llm", action="store_true",
                         help="Disable the LLM room-size extractor for I2 (I2 -> INCONCLUSIVE).")
     parser.add_argument("--use-llm", dest="use_llm", action="store_true",
@@ -263,6 +313,7 @@ def main() -> None:
         use_llm=args.use_llm and not args.no_llm,
         max_turns=args.max_turns,
         scenario_ids=args.scenario_id,
+        agent_modes=args.agent,
     )
 
 
