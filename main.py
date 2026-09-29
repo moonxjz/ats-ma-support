@@ -22,6 +22,11 @@ logger = logging.getLogger("ats_support_cli")
 
 EXPERIMENT_LOG_DIR = Path("experiment_logs")
 
+# Consecutive unproductive (blank) simulator turns tolerated before the run is
+# aborted with final_status "STALLED" instead of silently burning the rest of
+# max_turns as UNRESOLVED.
+STALL_LIMIT = 3
+
 
 def save_experiment_log(*, session, scenario_id, order_store_path, final_status, final_reason):
     """Persist the final order(s) and full dialogue history for a single run.
@@ -89,6 +94,7 @@ def run_scenario_conversation(*, scenario_id, order_store_path=DEFAULT_ORDER_STO
     simulator = create_simple_simulator(f"evaluation/scenarios/{scenario_id}.json")
     logger.info('Scenario Id is: %s', scenario_id)
     turn = 0
+    consecutive_blanks = 0
     while turn < max_turns:
         turn += 1
         logger.info('--- Turn %d start ---', turn)
@@ -104,21 +110,32 @@ def run_scenario_conversation(*, scenario_id, order_store_path=DEFAULT_ORDER_STO
             if verbose:
                 print()
             break
+        message = message or ''
         if message.strip() == '/quit':
             logger.info('User issued /quit command')
             final_status = "INTERRUPTED"
             final_reason = "user issued /quit"
             break
         if not message.strip():
-            logger.debug('Empty message, skipping')
+            consecutive_blanks += 1
+            logger.warning('Empty customer message at turn %d (consecutive_blanks=%d)', turn, consecutive_blanks)
+            if consecutive_blanks >= STALL_LIMIT:
+                logger.error('Customer simulator returned blank %d times in a row – ending run as STALLED', consecutive_blanks)
+                final_status, final_reason = "STALLED", "customer simulator returned blank repeatedly; conversation stalled"
+                break
             continue
         if not pending and message.strip() == '/retry':
             logger.warning('/retry issued but no pending response exists')
             print('Diagnostic: there is no pending response to retry.')
             continue
         if pending and message.strip() != '/retry':
-            logger.warning('Pending response unresolved; user must /retry before new input')
+            consecutive_blanks += 1
+            logger.warning('Pending response unresolved; user must /retry before new input (consecutive_blanks=%d)', consecutive_blanks)
             print('Diagnostic: resolve the pending response with /retry before entering a new turn.')
+            if consecutive_blanks >= STALL_LIMIT:
+                logger.error('Pending response never retried %d times in a row – ending run as STALLED', consecutive_blanks)
+                final_status, final_reason = "STALLED", "pending response never retried; conversation stalled"
+                break
             continue
         if verbose:
             print(f"\n{'='*60}")
@@ -146,6 +163,7 @@ def run_scenario_conversation(*, scenario_id, order_store_path=DEFAULT_ORDER_STO
                 continue
         session = result.session
         pending = None
+        consecutive_blanks = 0
 
         # Detailed per-turn trace: classifier, order agent, support agent, workflow.
         execution = getattr(result, "execution", None)
@@ -213,6 +231,7 @@ def run_scenario_conversation_pure(*, scenario_id, order_store_path=DEFAULT_ORDE
     final_status = "UNRESOLVED"
     final_reason = None
     turn = 0
+    consecutive_blanks = 0
     while turn < max_turns:
         turn += 1
         try:
@@ -224,10 +243,17 @@ def run_scenario_conversation_pure(*, scenario_id, order_store_path=DEFAULT_ORDE
         except (EOFError, KeyboardInterrupt):
             final_status, final_reason = "INTERRUPTED", "EOF / KeyboardInterrupt"
             break
+        message = message or ''
         if message.strip() == '/quit':
             final_status, final_reason = "INTERRUPTED", "user issued /quit"
             break
         if not message.strip():
+            consecutive_blanks += 1
+            logger.warning('Empty customer message at turn %d (consecutive_blanks=%d)', turn, consecutive_blanks)
+            if consecutive_blanks >= STALL_LIMIT:
+                logger.error('Customer simulator returned blank %d times in a row – ending run as STALLED', consecutive_blanks)
+                final_status, final_reason = "STALLED", "customer simulator returned blank repeatedly; conversation stalled"
+                break
             continue
         if verbose:
             print(f"\n{'='*60}\n[Customer Turn {turn}]\n{'='*60}\n{message}")
@@ -237,6 +263,7 @@ def run_scenario_conversation_pure(*, scenario_id, order_store_path=DEFAULT_ORDE
             print(f"Diagnostic: agent failure: {exc}")
             final_status, final_reason = "FAILURE", str(exc)
             break
+        consecutive_blanks = 0
         if verbose:
             print(f"\n{'='*60}\n[Agent Turn {turn}]\n{'='*60}\n{response}")
         if agent.cancelled:
