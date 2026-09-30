@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import re
 from copy import deepcopy
 from decimal import Decimal
@@ -52,7 +53,7 @@ from workflow.order.order_creation_order_store import (
     create_order,
 )
 
-MODEL_NAME = "qwen3:8b"
+MODEL_NAME = os.getenv("MODELS_CN", "")
 MAX_AGENT_STEPS = 8
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]

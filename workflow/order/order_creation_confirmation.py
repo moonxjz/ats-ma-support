@@ -1,6 +1,7 @@
 """Interpret a pending configuration or final-order response without changing state."""
 
 import json
+import os
 
 # from ollama import chat
 from tools.llm_client import chat
@@ -11,7 +12,7 @@ from entity.order_creation_state import OrderCreationState, OrderCreationStage
 
 from entity.confirmation import ConfirmationInterpretation
 
-MODEL_NAME = "qwen3:8b"
+MODEL_NAME = os.getenv("MODELS_CN", "")
 
 SYSTEM_PROMPT = """
 Interpret the CURRENT customer's response to the pending product configuration

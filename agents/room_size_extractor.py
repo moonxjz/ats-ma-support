@@ -10,13 +10,14 @@ pattern in workflow/order/order_creation_extraction.py.
 """
 
 import json
+import os
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from entity.conversation import ConversationMessage
 from tools.llm_client import chat
 
-MODEL_NAME = "qwen3:8b"
+MODEL_NAME = "gpt-4.1"
 
 
 class ExtractedRoomInformation(BaseModel):

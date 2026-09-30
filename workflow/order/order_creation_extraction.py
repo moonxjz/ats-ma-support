@@ -1,6 +1,7 @@
 """Extract current-turn customer updates; no merge or workflow execution."""
 
 import json
+import os
 
 # from ollama import chat
 from tools.llm_client import chat
@@ -11,7 +12,7 @@ from entity.extracted_order import ExtractedDeliveryAddress, ExtractedOrderInfor
 
 from entity.conversation import ConversationMessage
 
-MODEL_NAME = "qwen3:8b"
+MODEL_NAME = os.getenv("MODELS_CN", "")
 SYSTEM_PROMPT = """
 Extract order information updates into exactly one JSON object matching the
 provided output schema. Return no Markdown or commentary.

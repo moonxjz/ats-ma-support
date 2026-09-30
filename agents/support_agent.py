@@ -7,6 +7,7 @@ Schema/numeric checks are not a complete semantic proof of free-form grounding.
 
 from copy import deepcopy
 import json
+import os
 import re
 
 # from ollama import chat
@@ -21,7 +22,7 @@ from entity.support import (_text, CustomerResponse, ResponseIntent, ResponseCon
                             SupportAction, SupportOutcome, SupportKnowledgeContext,
                             SupportActionResult, ConfirmationFraming)
 
-MODEL_NAME = "qwen3:8b"
+MODEL_NAME = os.getenv("MODELS_CN", "")
 HISTORY_LIMIT = 6
 
 _BASE_CONSTRAINTS = [

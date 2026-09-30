@@ -1,6 +1,7 @@
 """Shared ATS customer-message classification; no routing or workflow execution."""
 
 import json
+import os
 
 # from ollama import chat
 from tools.llm_client import chat
@@ -11,7 +12,7 @@ from entity.order_creation_state import OrderCreationState
 
 from entity.classification import ClassifierResult
 
-MODEL_NAME = "qwen3:8b"
+MODEL_NAME = os.getenv("MODELS_CN", "")
 SYSTEM_PROMPT = """
 Classify the current ATS customer-support message into its semantic
 categories. Return only a JSON object matching the supplied schema: categories

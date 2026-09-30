@@ -37,10 +37,6 @@ def chat(
     """
     api_key = os.getenv("KEY_CN", "")
     api_endpoint = os.getenv("ENDPOINT_CN", "https://www.dmxapi.cn/v1")
-    pre_model = os.getenv("MODELS_CN", "")
-
-    if pre_model:
-        model = pre_model
     
     client = OpenAI(api_key=api_key, base_url=api_endpoint)
     

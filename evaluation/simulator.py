@@ -1,12 +1,13 @@
 """Lightweight LLM Customer Simulator - Responds to order_agent based on scenario facts and strategy"""
 import json
+import os
 from pathlib import Path
 # from ollama import chat
 from tools.llm_client import chat
 from agents.order_agent import OrderCreationState
 from entity.conversation import ConversationMessage
 
-MODEL_NAME = "qwen3:4b"
+MODEL_NAME = "gpt-4.1"
 HISTORY_LIMIT = 5
 
 # Reinforced each turn: answer only what was asked, ask only about the pending field.
