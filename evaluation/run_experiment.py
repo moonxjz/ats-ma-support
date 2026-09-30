@@ -3,7 +3,7 @@
 For each scenario this runs the conversation `runs_per_scenario` times (one order
 per conversation). Every run's persisted artifact (written by `main.save_experiment_log`
 into `experiment_logs/`) is then evaluated with *every* implemented metric in
-`evaluation/metrics_test/` (I1, I2, I4, I5). Results are aggregated and written
+`evaluation/metrics_test/` (I1, I2, I3, I4, I5). Results are aggregated and written
 to `evaluation/results/`.
 
 Three levels of result are recorded, as required:
@@ -29,6 +29,7 @@ from typing import Any
 
 from evaluation.metrics_test.i1_required_information_completeness import evaluate_i1_file
 from evaluation.metrics_test.i2_configuration_validity import evaluate_i2_file
+from evaluation.metrics_test.i3_confirmation import evaluate_i3_file
 from evaluation.metrics_test.i4_commit_fidelity import evaluate_i4_file
 from evaluation.metrics_test.i5_at_most_once_commit import evaluate_i5_file
 from tools.llm_client import reset_usage, get_usage
@@ -37,7 +38,7 @@ DEFAULT_SCENARIOS_DIR = Path("evaluation/scenarios")
 DEFAULT_RESULTS_DIR = Path("evaluation/results")
 DEFAULT_ORDER_STORE_PATH = Path("data/orders.json")
 
-METRIC_NAMES = ("I1", "I2", "I4", "I5")
+METRIC_NAMES = ("I1", "I2", "I3", "I4", "I5")
 
 STATUS_RANK = {"PASS": 0, "INCONCLUSIVE": 1, "FAIL": 2}
 
@@ -159,6 +160,7 @@ def run_experiment(
         metric_evaluators = {
             "I1": lambda: evaluate_i1_file(log_path).to_dict(),
             "I2": lambda: evaluate_i2_file(log_path, room_extractor=room_extractor).to_dict(),
+            "I3": lambda: evaluate_i3_file(log_path, use_llm=use_llm).to_dict(),
             "I4": lambda: evaluate_i4_file(log_path, scenarios_dir=scenarios_dir).to_dict(),
             "I5": lambda: evaluate_i5_file(log_path).to_dict(),
         }
@@ -172,6 +174,7 @@ def run_experiment(
                     "status": "INCONCLUSIVE", "reason": f"metric_error: {exc}"}
         res_i1 = metric_results["I1"]
         res_i2 = metric_results["I2"]
+        res_i3 = metric_results["I3"]
         res_i4 = metric_results["I4"]
         res_i5 = metric_results["I5"]
         run_final = _aggregate_run_status(metric_results)
@@ -189,7 +192,7 @@ def run_experiment(
         })
         print(f"  -> {log_path.name}: run_final={run_final['status']} "
               f"(I1={res_i1['status']} I2={res_i2['status']} "
-              f"I4={res_i4['status']} I5={res_i5['status']})")
+              f"I3={res_i3['status']} I4={res_i4['status']} I5={res_i5['status']})")
 
     run_records: list[dict[str, Any]] = []
     for sf in scenario_files:
