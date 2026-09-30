@@ -184,6 +184,7 @@ def run_experiment(
             "metrics": metric_results,
             "run_final_status": run_final["status"],
             "run_final_detail": run_final["detail"],
+            "total_turns": _count_turns(log_path),
             "token_usage": get_usage(),
         })
         print(f"  -> {log_path.name}: run_final={run_final['status']} "
@@ -235,11 +236,28 @@ def _add_tokens(acc: dict[str, int], usage: dict[str, int] | None) -> None:
         acc[key] += usage.get(key, 0) or 0
 
 
+def _count_turns(log_path: str | Path) -> int:
+    """Count customer (user) turns in a run log's history (offline; no model calls).
+
+    One turn = one customer message. The committed ``history`` alternates
+    user/assistant, so the user-message count equals the number of exchanges.
+    Blank/pending turns that never entered the history are excluded.
+    """
+    try:
+        run = json.loads(Path(log_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    return sum(1 for m in (run.get("history") or [])
+               if isinstance(m, dict) and m.get("role") == "user")
+
+
 def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
     per_scenario: dict[str, Any] = {}
     overall_metrics = _empty_metric_counts()
     overall_runs = {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0}
     overall_tokens = _empty_token_counts()
+    overall_turns_sum = 0
+    overall_turns_count = 0
 
     for rec in run_records:
         sid = rec["scenario_id"]
@@ -248,6 +266,8 @@ def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
             "run_status": {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0},
             "metrics": _empty_metric_counts(),
             "tokens": _empty_token_counts(),
+            "turns_sum": 0,
+            "turns_count": 0,
         })
         ps["runs"] += 1
         ps["run_status"][rec["run_final_status"]] = ps["run_status"].get(rec["run_final_status"], 0) + 1
@@ -256,6 +276,9 @@ def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
             if st in ps["metrics"][name]:
                 ps["metrics"][name][st] += 1
         _add_tokens(ps["tokens"], rec.get("token_usage"))
+        tt = rec.get("total_turns") or 0
+        ps["turns_sum"] += tt
+        ps["turns_count"] += 1
 
         overall_runs[rec["run_final_status"]] = overall_runs.get(rec["run_final_status"], 0) + 1
         for name in METRIC_NAMES:
@@ -263,6 +286,8 @@ def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
             if st in overall_metrics[name]:
                 overall_metrics[name][st] += 1
         _add_tokens(overall_tokens, rec.get("token_usage"))
+        overall_turns_sum += tt
+        overall_turns_count += 1
 
     return {
         "per_scenario": per_scenario,
@@ -271,6 +296,7 @@ def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
             "run_status": overall_runs,
             "metrics": overall_metrics,
             "tokens": overall_tokens,
+            "avg_turns": round(overall_turns_sum / overall_turns_count, 2) if overall_turns_count else 0,
         },
     }
 
@@ -293,16 +319,19 @@ def _print_summary(summary: dict[str, Any]) -> None:
     for name in METRIC_NAMES:
         print(f"  {name}: {overall['metrics'][name]}")
     _print_tokens("  ", overall["tokens"])
+    print(f"  avg_turns: {overall.get('avg_turns', 0)}")
     print("\nPer scenario:")
     for sid, ps in summary["per_scenario"].items():
-        print(f"  {sid}: runs={ps['runs']} run_status={ps['run_status']}")
+        avg = round(ps["turns_sum"] / ps["turns_count"], 2) if ps["turns_count"] else 0
+        print(f"  {sid}: runs={ps['runs']} run_status={ps['run_status']} avg_turns={avg}")
         for name in METRIC_NAMES:
             print(f"      {name}: {ps['metrics'][name]}")
         _print_tokens("      ", ps["tokens"])
 
     print("\nBy agent mode:")
     for mode, sm in summary.get("by_agent", {}).items():
-        print(f"  [{mode}] runs={sm['overall']['runs']} run_status={sm['overall']['run_status']}")
+        print(f"  [{mode}] runs={sm['overall']['runs']} run_status={sm['overall']['run_status']} "
+              f"avg_turns={sm['overall'].get('avg_turns', 0)}")
         for name in METRIC_NAMES:
             print(f"      {name}: {sm['overall']['metrics'][name]}")
         _print_tokens("      ", sm["overall"]["tokens"])
