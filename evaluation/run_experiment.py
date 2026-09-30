@@ -31,6 +31,7 @@ from evaluation.metrics_test.i1_required_information_completeness import evaluat
 from evaluation.metrics_test.i2_configuration_validity import evaluate_i2_file
 from evaluation.metrics_test.i4_commit_fidelity import evaluate_i4_file
 from evaluation.metrics_test.i5_at_most_once_commit import evaluate_i5_file
+from tools.llm_client import reset_usage, get_usage
 
 DEFAULT_SCENARIOS_DIR = Path("evaluation/scenarios")
 DEFAULT_RESULTS_DIR = Path("evaluation/results")
@@ -125,6 +126,7 @@ def run_experiment(
     def _execute_one(driver, sid, rep, agent_mode):
         print(f"[{datetime.now():%H:%M:%S}] Running scenario {sid} "
               f"(agent={agent_mode}) rep {rep}/{runs_per_scenario}")
+        reset_usage()
         try:
             log_path = driver(
                 scenario_id=sid,
@@ -146,6 +148,7 @@ def run_experiment(
                                    "reason": f"run_crashed: {exc}"} for name in METRIC_NAMES},
                 "run_final_status": "INCONCLUSIVE",
                 "run_final_detail": "run crashed before completion",
+                "token_usage": get_usage(),
             })
             return
 
@@ -181,6 +184,7 @@ def run_experiment(
             "metrics": metric_results,
             "run_final_status": run_final["status"],
             "run_final_detail": run_final["detail"],
+            "token_usage": get_usage(),
         })
         print(f"  -> {log_path.name}: run_final={run_final['status']} "
               f"(I1={res_i1['status']} I2={res_i2['status']} "
@@ -220,10 +224,22 @@ def _empty_metric_counts() -> dict[str, dict[str, int]]:
     return {name: {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0} for name in METRIC_NAMES}
 
 
+def _empty_token_counts() -> dict[str, int]:
+    return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
+
+
+def _add_tokens(acc: dict[str, int], usage: dict[str, int] | None) -> None:
+    if not usage:
+        return
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens", "calls"):
+        acc[key] += usage.get(key, 0) or 0
+
+
 def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
     per_scenario: dict[str, Any] = {}
     overall_metrics = _empty_metric_counts()
     overall_runs = {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0}
+    overall_tokens = _empty_token_counts()
 
     for rec in run_records:
         sid = rec["scenario_id"]
@@ -231,6 +247,7 @@ def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
             "runs": 0,
             "run_status": {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0},
             "metrics": _empty_metric_counts(),
+            "tokens": _empty_token_counts(),
         })
         ps["runs"] += 1
         ps["run_status"][rec["run_final_status"]] = ps["run_status"].get(rec["run_final_status"], 0) + 1
@@ -238,12 +255,14 @@ def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
             st = rec["metrics"].get(name, {}).get("status")
             if st in ps["metrics"][name]:
                 ps["metrics"][name][st] += 1
+        _add_tokens(ps["tokens"], rec.get("token_usage"))
 
         overall_runs[rec["run_final_status"]] = overall_runs.get(rec["run_final_status"], 0) + 1
         for name in METRIC_NAMES:
             st = rec["metrics"].get(name, {}).get("status")
             if st in overall_metrics[name]:
                 overall_metrics[name][st] += 1
+        _add_tokens(overall_tokens, rec.get("token_usage"))
 
     return {
         "per_scenario": per_scenario,
@@ -251,6 +270,7 @@ def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
             "runs": len(run_records),
             "run_status": overall_runs,
             "metrics": overall_metrics,
+            "tokens": overall_tokens,
         },
     }
 
@@ -272,17 +292,26 @@ def _print_summary(summary: dict[str, Any]) -> None:
     print(f"Total runs: {overall['runs']}  run status: {overall['run_status']}")
     for name in METRIC_NAMES:
         print(f"  {name}: {overall['metrics'][name]}")
+    _print_tokens("  ", overall["tokens"])
     print("\nPer scenario:")
     for sid, ps in summary["per_scenario"].items():
         print(f"  {sid}: runs={ps['runs']} run_status={ps['run_status']}")
         for name in METRIC_NAMES:
             print(f"      {name}: {ps['metrics'][name]}")
+        _print_tokens("      ", ps["tokens"])
 
     print("\nBy agent mode:")
     for mode, sm in summary.get("by_agent", {}).items():
         print(f"  [{mode}] runs={sm['overall']['runs']} run_status={sm['overall']['run_status']}")
         for name in METRIC_NAMES:
             print(f"      {name}: {sm['overall']['metrics'][name]}")
+        _print_tokens("      ", sm["overall"]["tokens"])
+
+
+def _print_tokens(indent: str, tokens: dict[str, int]) -> None:
+    print(f"{indent}tokens: prompt={tokens['prompt_tokens']} "
+          f"completion={tokens['completion_tokens']} "
+          f"total={tokens['total_tokens']} (calls={tokens['calls']})")
 
 
 def main() -> None:

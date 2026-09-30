@@ -15,6 +15,7 @@ from agents.order_agent import process_order_creation_message
 from workflow.order.order_creation_order_store import DEFAULT_ORDER_STORE_PATH, load_orders
 from evaluation.simulator import create_simple_simulator
 from tools.knowledge_tool import load_product_prices_as_knowledge
+from tools.llm_client import reset_usage, get_usage
 from agents.pure_agent import PureAgent
 
 logger = logging.getLogger("ats_support_cli")
@@ -28,7 +29,8 @@ EXPERIMENT_LOG_DIR = Path("experiment_logs")
 STALL_LIMIT = 3
 
 
-def save_experiment_log(*, session, scenario_id, order_store_path, final_status, final_reason):
+def save_experiment_log(*, session, scenario_id, order_store_path, final_status, final_reason,
+                        token_usage=None):
     """Persist the final order(s) and full dialogue history for a single run.
 
     Each run is saved independently under experiment_logs/<scenario>_run<NNN>.json,
@@ -63,6 +65,7 @@ def save_experiment_log(*, session, scenario_id, order_store_path, final_status,
         "final_reason": final_reason,
         "orders": orders,
         "history": history,
+        "token_usage": token_usage,
     }
     log_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False),
@@ -93,6 +96,7 @@ def run_scenario_conversation(*, scenario_id, order_store_path=DEFAULT_ORDER_STO
     final_reason = None
     simulator = create_simple_simulator(f"evaluation/scenarios/{scenario_id}.json")
     logger.info('Scenario Id is: %s', scenario_id)
+    reset_usage()
     turn = 0
     consecutive_blanks = 0
     while turn < max_turns:
@@ -214,6 +218,7 @@ def run_scenario_conversation(*, scenario_id, order_store_path=DEFAULT_ORDER_STO
         order_store_path=order_store_path,
         final_status=final_status,
         final_reason=final_reason,
+        token_usage=get_usage(),
     )
 
 
@@ -232,6 +237,7 @@ def run_scenario_conversation_pure(*, scenario_id, order_store_path=DEFAULT_ORDE
     final_reason = None
     turn = 0
     consecutive_blanks = 0
+    reset_usage()
     while turn < max_turns:
         turn += 1
         try:
@@ -279,6 +285,7 @@ def run_scenario_conversation_pure(*, scenario_id, order_store_path=DEFAULT_ORDE
         order_store_path=order_store_path,
         final_status=final_status,
         final_reason=final_reason,
+        token_usage=get_usage(),
     )
 
 

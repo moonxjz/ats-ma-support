@@ -16,6 +16,24 @@ class ChatResponse:
     def __init__(self, content: str):
         self.message = self.Message(content)
 
+
+# Process-wide token-usage accumulator so a whole run / experiment can be summed.
+# Every chat() call adds the prompt/completion tokens returned by the API.
+_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
+
+
+def get_usage() -> dict:
+    """Return a copy of the accumulated token usage so far."""
+    return dict(_usage)
+
+
+def reset_usage() -> None:
+    """Zero out the accumulated token usage (call before starting a run)."""
+    _usage["prompt_tokens"] = 0
+    _usage["completion_tokens"] = 0
+    _usage["total_tokens"] = 0
+    _usage["calls"] = 0
+
 def chat(
     model: str,
     messages: list[dict],
@@ -66,5 +84,13 @@ def chat(
     
     response = client.chat.completions.create(**params)
     content = response.choices[0].message.content
-    
+
+    # Accumulate token usage if the endpoint reports it.
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        _usage["prompt_tokens"] += getattr(usage, "prompt_tokens", 0) or 0
+        _usage["completion_tokens"] += getattr(usage, "completion_tokens", 0) or 0
+        _usage["total_tokens"] += getattr(usage, "total_tokens", 0) or 0
+        _usage["calls"] += 1
+
     return ChatResponse(content)
