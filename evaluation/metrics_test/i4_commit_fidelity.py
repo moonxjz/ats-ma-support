@@ -33,7 +33,7 @@ Comparison rules
   pricing; otherwise that part of the check is skipped (still PASS if the
   business fields match).
 
-Status values follow the paper metric convention: PASS / FAIL / INCONCLUSIVE.
+Status values follow the paper metric convention: PASS / FAIL.
 """
 
 from __future__ import annotations
@@ -44,6 +44,8 @@ from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+
+from evaluation.metrics_test.scenario_outcome import load_scenario, scenario_expects_no_order
 
 DEFAULT_LOGS_DIR = Path("experiment_logs")
 DEFAULT_SCENARIOS_DIR = Path("evaluation/scenarios")
@@ -90,7 +92,7 @@ class I4Evaluation:
     scenario_id: str | None
     run_index: int | None
     conversation_id: str | None
-    status: str  # PASS | FAIL | INCONCLUSIVE
+    status: str  # PASS | FAIL
     reason: str
     orders_count: int
     final_status: str | None = None
@@ -218,23 +220,41 @@ def evaluate_i4_run(run: dict, scenario: dict | None) -> I4Evaluation:
     orders = run.get("orders") or []
     orders_count = len(orders)
 
+    # Resolve scenario for the cancellation/no-order policy (the caller may pass
+    # it in, or we fall back to loading it ourselves).
+    scenario = scenario or load_scenario(scenario_id)
+    if scenario_expects_no_order(scenario):
+        if orders_count == 0:
+            return I4Evaluation(
+                scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+                status="PASS", reason="no_order_as_expected", orders_count=orders_count,
+                final_status=final_status, mismatched_fields=[], price_mismatched_fields=[],
+            )
+        return I4Evaluation(
+            scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+            status="FAIL", reason="order_created_when_none_expected", orders_count=orders_count,
+            final_status=final_status, mismatched_fields=[], price_mismatched_fields=[],
+        )
+
+    # Order-expecting scenario. The INCONCLUSIVE status has been removed; the
+    # cases below that previously were INCONCLUSIVE now resolve to FAIL.
     if orders_count == 0:
         return I4Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-            status="INCONCLUSIVE", reason="no_order_committed", orders_count=orders_count,
+            status="FAIL", reason="no_order_created_when_expected", orders_count=orders_count,
             final_status=final_status, mismatched_fields=[], price_mismatched_fields=[],
         )
     if scenario is None:
         return I4Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-            status="INCONCLUSIVE", reason="scenario_not_found", orders_count=orders_count,
+            status="FAIL", reason="scenario_not_found", orders_count=orders_count,
             final_status=final_status, mismatched_fields=[], price_mismatched_fields=[],
         )
     ground_truth = (scenario.get("customer") or {}).get("ground_truth")
     if not ground_truth:
         return I4Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-            status="INCONCLUSIVE", reason="ground_truth_missing", orders_count=orders_count,
+            status="FAIL", reason="ground_truth_missing", orders_count=orders_count,
             final_status=final_status, mismatched_fields=[], price_mismatched_fields=[],
         )
 
@@ -265,19 +285,6 @@ def evaluate_i4_run(run: dict, scenario: dict | None) -> I4Evaluation:
     )
 
 
-def load_scenario(scenario_id: str | None, scenarios_dir: str | Path = DEFAULT_SCENARIOS_DIR) -> dict | None:
-    """Load a scenario JSON by id from the scenarios directory."""
-    if not scenario_id:
-        return None
-    path = Path(scenarios_dir) / f"{scenario_id}.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
 def evaluate_i4_file(path: str | Path, scenarios_dir: str | Path = DEFAULT_SCENARIOS_DIR) -> I4Evaluation:
     """Evaluate I4 from a single experiment_logs run JSON file."""
     path = Path(path)
@@ -286,7 +293,7 @@ def evaluate_i4_file(path: str | Path, scenarios_dir: str | Path = DEFAULT_SCENA
     except (OSError, json.JSONDecodeError) as exc:
         return I4Evaluation(
             scenario_id=None, run_index=None, conversation_id=None,
-            status="INCONCLUSIVE", reason=f"cannot_read_run_log: {exc}", orders_count=0,
+            status="FAIL", reason=f"cannot_read_run_log: {exc}", orders_count=0,
             final_status=None, mismatched_fields=[], price_mismatched_fields=[],
         )
     scenario = load_scenario(run.get("scenario_id"), scenarios_dir)

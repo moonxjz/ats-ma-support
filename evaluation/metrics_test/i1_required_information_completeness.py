@@ -19,7 +19,7 @@ Required fields are declared here as an explicit evaluation contract (mirroring
 `entity/order_creation_state.REQUIRED_CUSTOMER_FIELDS`) rather than imported from
 the runtime, so this metric stays free of architecture modules.
 
-Status values follow the paper metric convention: PASS / FAIL / INCONCLUSIVE.
+Status values follow the paper metric convention: PASS / FAIL.
 """
 
 from __future__ import annotations
@@ -29,6 +29,8 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from evaluation.metrics_test.scenario_outcome import load_scenario, scenario_expects_no_order
 
 # Required customer fields for order creation. Mirrors
 # entity/order_creation_state.py::REQUIRED_CUSTOMER_FIELDS. Declared locally so
@@ -62,7 +64,7 @@ class I1Evaluation:
     scenario_id: str | None
     run_index: int | None
     conversation_id: str | None
-    status: str  # PASS | FAIL | INCONCLUSIVE
+    status: str  # PASS | FAIL
     reason: str
     orders_count: int
     final_status: str | None = None
@@ -101,18 +103,33 @@ def evaluate_i1_run(run: dict) -> I1Evaluation:
     orders = run.get("orders") or []
     orders_count = len(orders)
 
+    # Cancellation / no-order scenarios: the scenario declares that no order should
+    # be created. A missing order is then the CORRECT outcome (PASS); any created
+    # order is wrong (FAIL) — regardless of metric internals.
+    scenario = load_scenario(scenario_id)
+    if scenario_expects_no_order(scenario):
+        if orders_count == 0:
+            return I1Evaluation(
+                scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+                status="PASS", reason="no_order_as_expected", orders_count=orders_count,
+                final_status=final_status, missing_fields=[],
+            )
+        return I1Evaluation(
+            scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+            status="FAIL", reason="order_created_when_none_expected", orders_count=orders_count,
+            final_status=final_status, missing_fields=[],
+        )
+
+    # Order-expecting scenario. The metric's normal judgement applies below. A
+    # missing order now means the expected order was never produced -> FAIL
+    # (the INCONCLUSIVE status has been removed).
     if orders_count == 0:
-        # No committed order means there is no authoritative snapshot to judge
-        # required-information completeness against. That is not a proven failure
-        # (the conversation may have legitimately ended without an order, e.g. the
-        # customer abandoned at final confirmation), so I1 is INCONCLUSIVE rather
-        # than FAIL: the metric cannot be judged either way.
         return I1Evaluation(
             scenario_id=scenario_id,
             run_index=run_index,
             conversation_id=conversation_id,
-            status="INCONCLUSIVE",
-            reason="no_committed_order_cannot_judge",
+            status="FAIL",
+            reason="no_order_created_when_expected",
             orders_count=orders_count,
             final_status=final_status,
             missing_fields=[],
@@ -157,7 +174,7 @@ def evaluate_i1_file(path: str | Path) -> I1Evaluation:
             scenario_id=None,
             run_index=None,
             conversation_id=None,
-            status="INCONCLUSIVE",
+            status="FAIL",
             reason=f"cannot_read_run_log: {exc}",
             orders_count=0,
             final_status=None,

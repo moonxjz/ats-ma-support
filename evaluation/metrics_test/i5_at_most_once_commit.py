@@ -19,10 +19,10 @@ that one conversation. The at-most-once property is therefore a pure count check
 
   * 1 committed order  -> PASS  (exactly one commit; not duplicated)
   * >1 committed orders -> FAIL  (the same transaction was committed more than once)
-  * 0 committed orders  -> INCONCLUSIVE (no commit occurred; the at-most-once
-                           property is neither exercised nor violated)
+  * 0 committed orders  -> FAIL  (no order was committed, but an order was expected;
+                           the at-most-once property was never exercised)
 
-Status values follow the paper metric convention: PASS / FAIL / INCONCLUSIVE.
+Status values follow the paper metric convention: PASS / FAIL.
 """
 
 from __future__ import annotations
@@ -32,6 +32,8 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from evaluation.metrics_test.scenario_outcome import load_scenario, scenario_expects_no_order
 
 DEFAULT_LOGS_DIR = Path("experiment_logs")
 
@@ -43,7 +45,7 @@ class I5Evaluation:
     scenario_id: str | None
     run_index: int | None
     conversation_id: str | None
-    status: str  # PASS | FAIL | INCONCLUSIVE
+    status: str  # PASS | FAIL
     reason: str
     orders_count: int
     final_status: str | None = None
@@ -63,6 +65,24 @@ def evaluate_i5_run(run: dict) -> I5Evaluation:
     orders_count = len(orders)
     order_ids = [o.get("order_id") for o in orders if isinstance(o, dict)]
 
+    # Cancellation / no-order scenarios: a missing order is the CORRECT outcome
+    # (PASS); any created order is wrong (FAIL) — regardless of metric internals.
+    scenario = load_scenario(scenario_id)
+    if scenario_expects_no_order(scenario):
+        if orders_count == 0:
+            return I5Evaluation(
+                scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+                status="PASS", reason="no_order_as_expected", orders_count=orders_count,
+                final_status=final_status, order_ids=order_ids,
+            )
+        return I5Evaluation(
+            scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+            status="FAIL", reason="order_created_when_none_expected", orders_count=orders_count,
+            final_status=final_status, order_ids=order_ids,
+        )
+
+    # Order-expecting scenario. The INCONCLUSIVE status has been removed; a missing
+    # order now means the expected order was never produced -> FAIL.
     if orders_count == 1:
         return I5Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
@@ -77,7 +97,7 @@ def evaluate_i5_run(run: dict) -> I5Evaluation:
         )
     return I5Evaluation(
         scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-        status="INCONCLUSIVE", reason="no_order_committed", orders_count=orders_count,
+        status="FAIL", reason="no_order_created_when_expected", orders_count=orders_count,
         final_status=final_status, order_ids=order_ids,
     )
 
@@ -90,7 +110,7 @@ def evaluate_i5_file(path: str | Path) -> I5Evaluation:
     except (OSError, json.JSONDecodeError) as exc:
         return I5Evaluation(
             scenario_id=None, run_index=None, conversation_id=None,
-            status="INCONCLUSIVE", reason=f"cannot_read_run_log: {exc}", orders_count=0,
+            status="FAIL", reason=f"cannot_read_run_log: {exc}", orders_count=0,
             final_status=None, order_ids=[],
         )
     return evaluate_i5_run(run)

@@ -30,7 +30,7 @@ I2 therefore REQUIRES an injected `room_extractor` (the LLM agent). It is a pure
 function of (run artifact, room_extractor); the LLM call lives entirely inside the
 extractor. The extractor is used only here (I2), not at runtime or in other metrics.
 
-Status values follow the paper metric convention: PASS / FAIL / INCONCLUSIVE.
+Status values follow the paper metric convention: PASS / FAIL.
 """
 
 from __future__ import annotations
@@ -42,6 +42,8 @@ from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
+
+from evaluation.metrics_test.scenario_outcome import load_scenario, scenario_expects_no_order
 
 # Minimum room sizes per table size (metres). Mirrors
 # workflow/order/order_creation_rules.py::MINIMUM_ROOM_SIZES. Declared locally so
@@ -70,7 +72,7 @@ class I2Evaluation:
     scenario_id: str | None
     run_index: int | None
     conversation_id: str | None
-    status: str  # PASS | FAIL | INCONCLUSIVE
+    status: str  # PASS | FAIL
     reason: str
     orders_count: int
     final_status: str | None = None
@@ -161,10 +163,28 @@ def evaluate_i2_run(run: dict, room_extractor: Callable) -> I2Evaluation:
     orders = run.get("orders") or []
     orders_count = len(orders)
 
+    # Cancellation / no-order scenarios: a missing order is the CORRECT outcome
+    # (PASS); any created order is wrong (FAIL) — regardless of metric internals.
+    scenario = load_scenario(scenario_id)
+    if scenario_expects_no_order(scenario):
+        if orders_count == 0:
+            return I2Evaluation(
+                scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+                status="PASS", reason="no_order_as_expected", orders_count=orders_count,
+                final_status=final_status, room_size_validation=None, invalid_aspects=[],
+            )
+        return I2Evaluation(
+            scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+            status="FAIL", reason="order_created_when_none_expected", orders_count=orders_count,
+            final_status=final_status, room_size_validation=None, invalid_aspects=[],
+        )
+
+    # Order-expecting scenario. The metric's normal judgement applies below. A
+    # missing order now means the expected order was never produced -> FAIL.
     if orders_count == 0:
         return I2Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-            status="INCONCLUSIVE", reason="no_order_committed", orders_count=orders_count,
+            status="FAIL", reason="no_order_created_when_expected", orders_count=orders_count,
             final_status=final_status, room_size_validation=None, invalid_aspects=[],
         )
 
@@ -174,7 +194,7 @@ def evaluate_i2_run(run: dict, room_extractor: Callable) -> I2Evaluation:
     except Exception as exc:
         return I2Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-            status="INCONCLUSIVE", reason=f"room_extraction_failed: {exc}", orders_count=orders_count,
+            status="FAIL", reason=f"room_extraction_failed: {exc}", orders_count=orders_count,
             final_status=final_status, room_size_validation=None, invalid_aspects=[],
         )
     r_size = getattr(recovered, "room_size", None)
@@ -210,7 +230,7 @@ def evaluate_i2_run(run: dict, room_extractor: Callable) -> I2Evaluation:
     # Unreachable when orders_count > 0; defensive fallback.
     return I2Evaluation(
         scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-        status="INCONCLUSIVE", reason="no_order_committed", orders_count=orders_count,
+        status="FAIL", reason="no_order_created_when_expected", orders_count=orders_count,
         final_status=final_status, room_size_validation=None, invalid_aspects=[],
     )
 
@@ -223,7 +243,7 @@ def evaluate_i2_file(path: str | Path, room_extractor: Callable) -> I2Evaluation
     except (OSError, json.JSONDecodeError) as exc:
         return I2Evaluation(
             scenario_id=None, run_index=None, conversation_id=None,
-            status="INCONCLUSIVE", reason=f"cannot_read_run_log: {exc}", orders_count=0,
+            status="FAIL", reason=f"cannot_read_run_log: {exc}", orders_count=0,
             final_status=None, room_size_validation=None, invalid_aspects=[],
         )
     return evaluate_i2_run(run, room_extractor=room_extractor)

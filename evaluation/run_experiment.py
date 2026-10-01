@@ -8,7 +8,7 @@ to `evaluation/results/`.
 
 Three levels of result are recorded, as required:
   1. per execution, per metric result   -> run["metrics"][<Ix>]   (each metric's full dict)
-  2. per execution, final result        -> run["run_final_status"] (PASS/FAIL/INCONCLUSIVE)
+  2. per execution, final result        -> run["run_final_status"] (PASS/FAIL)
   3. all executions, final result       -> output["summary"] (per-scenario + overall counts)
 
 Usage:
@@ -40,7 +40,7 @@ DEFAULT_ORDER_STORE_PATH = Path("data/orders.json")
 
 METRIC_NAMES = ("I1", "I2", "I3", "I4", "I5")
 
-STATUS_RANK = {"PASS": 0, "INCONCLUSIVE": 1, "FAIL": 2}
+# INCONCLUSIVE status removed: metrics now only emit PASS or FAIL.
 
 # Supported agents. "legacy" is the classifier/router/order-agent/support-agent
 # pipeline; "pure" is the single-LLM PureAgent.
@@ -57,24 +57,14 @@ def _get_driver(agent_mode: str):
 
 
 def _aggregate_run_status(metric_results: dict[str, dict]) -> dict[str, Any]:
-    """Worst-of metric statuses: any FAIL -> FAIL; else any INCONCLUSIVE -> INCONCLUSIVE; else PASS."""
-    worst = "PASS"
+    """Worst-of metric statuses: any FAIL -> FAIL; else PASS (INCONCLUSIVE removed)."""
     failing: list[str] = []
     for name, res in metric_results.items():
-        status = res.get("status")
-        if status is None:
-            continue
-        if STATUS_RANK.get(status, 3) > STATUS_RANK.get(worst, 0):
-            worst = status
-        if status == "FAIL":
+        if res.get("status") == "FAIL":
             failing.append(name)
-    if worst == "FAIL":
-        detail = f"failing metrics: {', '.join(failing)}"
-    elif worst == "INCONCLUSIVE":
-        detail = "one or more metrics inconclusive (not all PASS)"
-    else:
-        detail = "all metrics PASS"
-    return {"status": worst, "detail": detail}
+    if failing:
+        return {"status": "FAIL", "detail": f"failing metrics: {', '.join(failing)}"}
+    return {"status": "PASS", "detail": "all metrics PASS"}
 
 
 def run_experiment(
@@ -103,14 +93,14 @@ def run_experiment(
     if not scenario_files:
         raise SystemExit(f"No scenario files found in {scenarios_dir}")
 
-    # I2 needs the LLM room-size extractor. If unavailable, I2 degrades to INCONCLUSIVE.
+    # I2 needs the LLM room-size extractor. If unavailable, I2 degrades to FAIL.
     room_extractor = None
     if use_llm:
         try:
             from agents.room_size_extractor import extract_final_room_information
             room_extractor = extract_final_room_information
         except Exception as exc:  # noqa: BLE001 - degrade gracefully
-            print(f"Warning: LLM room extractor unavailable ({exc}); I2 will be INCONCLUSIVE.")
+            print(f"Warning: LLM room extractor unavailable ({exc}); I2 will be FAIL.")
 
     # Default to testing BOTH agents so the results are directly comparable.
     effective_agent_modes = list(agent_modes) if agent_modes else list(AGENT_MODES)
@@ -145,9 +135,9 @@ def run_experiment(
                 "run_index": None,
                 "conversation_id": None,
                 "final_status": "ERROR",
-                "metrics": {name: {"status": "INCONCLUSIVE",
+                "metrics": {name: {"status": "FAIL",
                                    "reason": f"run_crashed: {exc}"} for name in METRIC_NAMES},
-                "run_final_status": "INCONCLUSIVE",
+                "run_final_status": "FAIL",
                 "run_final_detail": "run crashed before completion",
                 "token_usage": get_usage(),
             })
@@ -171,7 +161,7 @@ def run_experiment(
             except Exception as exc:  # noqa: BLE001 - one bad metric must not skip the rest
                 print(f"  ! metric {name} failed for {log_path.name}: {exc}")
                 metric_results[name] = {
-                    "status": "INCONCLUSIVE", "reason": f"metric_error: {exc}"}
+                    "status": "FAIL", "reason": f"metric_error: {exc}"}
         res_i1 = metric_results["I1"]
         res_i2 = metric_results["I2"]
         res_i3 = metric_results["I3"]
@@ -225,7 +215,7 @@ def run_experiment(
 
 
 def _empty_metric_counts() -> dict[str, dict[str, int]]:
-    return {name: {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0} for name in METRIC_NAMES}
+    return {name: {"PASS": 0, "FAIL": 0} for name in METRIC_NAMES}
 
 
 def _empty_token_counts() -> dict[str, int]:
@@ -257,7 +247,7 @@ def _count_turns(log_path: str | Path) -> int:
 def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
     per_scenario: dict[str, Any] = {}
     overall_metrics = _empty_metric_counts()
-    overall_runs = {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0}
+    overall_runs = {"PASS": 0, "FAIL": 0}
     overall_tokens = _empty_token_counts()
     overall_turns_sum = 0
     overall_turns_count = 0
@@ -266,7 +256,7 @@ def _summarize_records(run_records: list[dict[str, Any]]) -> dict[str, Any]:
         sid = rec["scenario_id"]
         ps = per_scenario.setdefault(sid, {
             "runs": 0,
-            "run_status": {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0},
+            "run_status": {"PASS": 0, "FAIL": 0},
             "metrics": _empty_metric_counts(),
             "tokens": _empty_token_counts(),
             "turns_sum": 0,
@@ -360,7 +350,7 @@ def main() -> None:
     parser.add_argument("--agent", nargs="*", choices=list(AGENT_MODES), default=list(AGENT_MODES),
                         help="Which agent(s) to test: legacy and/or pure (default: both).")
     parser.add_argument("--no-llm", action="store_true",
-                        help="Disable the LLM room-size extractor for I2 (I2 -> INCONCLUSIVE).")
+                        help="Disable the LLM room-size extractor for I2 (I2 -> FAIL).")
     parser.add_argument("--use-llm", dest="use_llm", action="store_true",
                         help="Enable the LLM room-size extractor for I2 (default).")
     parser.set_defaults(use_llm=True)

@@ -17,18 +17,18 @@ fails any run where an Order was created (per the system's own `orders` list, th
 authoritative ground truth) without both confirmations being present in the
 dialogue, and passes runs where the order was correctly gated.
 
-Status values follow the paper metric convention: PASS / FAIL / INCONCLUSIVE.
+Status values follow the paper metric convention: PASS / FAIL.
 
   * Order created AND both confirmations present (and not created before them)
         -> PASS  ("both confirmations obtained before order creation")
   * Order created but a confirmation is missing, or created before confirmations
         -> FAIL  ("order created without required confirmations: ...")
   * No order created (system `orders` empty and judge saw no creation in dialogue)
-        -> INCONCLUSIVE ("no_order_created; confirmation gate not exercised")
+        -> FAIL ("no_order_created_when_expected")
 
 The judge model is the same env-selected model used everywhere else
 (`os.getenv("MODELS_CN", "")`). When the experiment is run with `--no-llm`, I3
-returns INCONCLUSIVE ("llm_disabled") instead of calling the model.
+returns FAIL ("llm_disabled") instead of calling the model.
 """
 
 from __future__ import annotations
@@ -39,6 +39,8 @@ import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from evaluation.metrics_test.scenario_outcome import load_scenario, scenario_expects_no_order
 
 DEFAULT_LOGS_DIR = Path("experiment_logs")
 
@@ -117,7 +119,7 @@ class I3Evaluation:
     scenario_id: str | None
     run_index: int | None
     conversation_id: str | None
-    status: str  # PASS | FAIL | INCONCLUSIVE
+    status: str  # PASS | FAIL
     reason: str
     orders_count: int
     final_status: str | None = None
@@ -182,10 +184,29 @@ def evaluate_i3_run(run: dict, use_llm: bool = True) -> I3Evaluation:
     orders = run.get("orders") or []
     orders_count = len(orders)
 
+    # Cancellation / no-order scenarios: a missing order is the CORRECT outcome
+    # (PASS); any created order is wrong (FAIL) — regardless of metric internals.
+    scenario = load_scenario(scenario_id)
+    if scenario_expects_no_order(scenario):
+        if orders_count == 0:
+            return I3Evaluation(
+                scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+                status="PASS", reason="no_order_as_expected", orders_count=orders_count,
+                final_status=final_status,
+            )
+        return I3Evaluation(
+            scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
+            status="FAIL", reason="order_created_when_none_expected", orders_count=orders_count,
+            final_status=final_status,
+        )
+
+    # Order-expecting scenario. The metric's normal judgement applies below. The
+    # INCONCLUSIVE status has been removed; cases that previously were INCONCLUSIVE
+    # now resolve to FAIL.
     if not use_llm:
         return I3Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-            status="INCONCLUSIVE", reason="llm_disabled", orders_count=orders_count,
+            status="FAIL", reason="llm_disabled", orders_count=orders_count,
             final_status=final_status,
         )
 
@@ -193,7 +214,7 @@ def evaluate_i3_run(run: dict, use_llm: bool = True) -> I3Evaluation:
     if not transcript.strip():
         return I3Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-            status="INCONCLUSIVE", reason="empty_history", orders_count=orders_count,
+            status="FAIL", reason="empty_history", orders_count=orders_count,
             final_status=final_status,
         )
 
@@ -202,7 +223,7 @@ def evaluate_i3_run(run: dict, use_llm: bool = True) -> I3Evaluation:
         err = (judge or {}).get("__error__", "unknown_judge_error")
         return I3Evaluation(
             scenario_id=scenario_id, run_index=run_index, conversation_id=conversation_id,
-            status="INCONCLUSIVE", reason=f"judge_failed: {err}", orders_count=orders_count,
+            status="FAIL", reason=f"judge_failed: {err}", orders_count=orders_count,
             final_status=final_status,
         )
 
@@ -218,7 +239,7 @@ def evaluate_i3_run(run: dict, use_llm: bool = True) -> I3Evaluation:
 
     if not order_created:
         status, reason = (
-            "INCONCLUSIVE", "no_order_created; confirmation gate not exercised")
+            "FAIL", "no_order_created_when_expected")
     else:
         issues: list[str] = []
         if not quote_confirmed:
@@ -253,7 +274,7 @@ def evaluate_i3_file(path: str | Path, use_llm: bool = True) -> I3Evaluation:
     except (OSError, json.JSONDecodeError) as exc:
         return I3Evaluation(
             scenario_id=None, run_index=None, conversation_id=None,
-            status="INCONCLUSIVE", reason=f"cannot_read_run_log: {exc}", orders_count=0,
+            status="FAIL", reason=f"cannot_read_run_log: {exc}", orders_count=0,
             final_status=None,
         )
     return evaluate_i3_run(run, use_llm=use_llm)
@@ -290,7 +311,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--no-llm", action="store_true",
-        help="Do not call the LLM judge; report INCONCLUSIVE (llm_disabled).",
+        help="Do not call the LLM judge; report FAIL (llm_disabled).",
     )
     parser.add_argument(
         "--quiet", action="store_true",
